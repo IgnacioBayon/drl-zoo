@@ -1,0 +1,12 @@
+[project]
+name = "rainbow-dqn"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "gymnasium[mujoco]>=1.2.3",
+    "matplotlib>=3.10.8",
+    "mujoco>=3.4.0",
+    "numpy>=2.4.2",
+]

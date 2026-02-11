@@ -3,7 +3,7 @@ import numpy as np
 from gymnasium import spaces
 
 
-class PixelObsWrapper(gym.ObservationWrapper):
+class ImgObsWrapper(gym.ObservationWrapper):
     """
     Replaces the observation with an RGB image from env.render().
     """

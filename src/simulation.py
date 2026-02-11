@@ -1,20 +1,19 @@
 import gymnasium as gym
-from pixel_observation import PixelObsWrapper
+
+from observation_space import ImgObsWrapper
 
 
 def run_gym_simulation():
 
     env = gym.make("Walker2d-v5", render_mode="rgb_array")
-    env = PixelObsWrapper(env, width=84, height=84)
+    env = ImgObsWrapper(env, width=84, height=84)
 
     observation, info = env.reset(seed=42)
 
     try:
         while True:
-            # Sample a random action
             action = env.action_space.sample()
 
-            # Step the environment
             observation, reward, terminated, truncated, info = env.step(action)
 
             if terminated or truncated:
