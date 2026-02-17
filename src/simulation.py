@@ -1,4 +1,5 @@
 import gymnasium as gym
+from gymnasium.wrappers import HumanRendering
 
 from observation_space import ImgObsWrapper
 
@@ -7,6 +8,7 @@ def run_gym_simulation():
 
     env = gym.make("Walker2d-v5", render_mode="rgb_array")
     env = ImgObsWrapper(env, width=84, height=84)
+    env = HumanRendering(env)
 
     observation, info = env.reset(seed=42)
 
