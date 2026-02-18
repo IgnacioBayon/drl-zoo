@@ -9,7 +9,7 @@ def send_mail(content: str, receiver: str):
     """Sends an email"""
 
     load_dotenv()
-    password = os.getenv("PASSWORD")
+    password = os.getenv("EMAIL_PASSWORD")
 
     msg = EmailMessage()
     msg["From"] = "ardian21ardian@gmail.com"
