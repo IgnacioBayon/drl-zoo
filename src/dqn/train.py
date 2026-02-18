@@ -4,6 +4,7 @@ from pathlib import Path
 
 import hydra
 import jax
+import jax.numpy as jnp
 from flax import nnx
 from omegaconf import DictConfig
 
@@ -24,7 +25,10 @@ def main(cfg: DictConfig):
 
     rngs = nnx.Rngs(params=jax.random.PRNGKey(cfg.seed))
     model = PaperDQN(cfg=cfg.models, num_actions=6, rngs=rngs)
-    print(model)
+
+    x = jnp.zeros((32, 4, 84, 84, 3), dtype=jnp.float32)
+    q = model(x)
+    print(q.shape)  # (32, 6)
 
 
 if __name__ == "__main__":
