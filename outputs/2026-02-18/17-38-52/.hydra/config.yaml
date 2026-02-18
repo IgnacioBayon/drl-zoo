@@ -1,0 +1,30 @@
+algo:
+  name: dqn
+  conv1:
+    in_features: 12
+    out_features: 16
+    kernel_size:
+    - 8
+    - 8
+    strides:
+    - 4
+    - 4
+  conv2:
+    out_features: 32
+    kernel_size:
+    - 4
+    - 4
+    strides:
+    - 2
+    - 2
+  fc:
+    in_features: 2592
+    out_features: 256
+  head: null
+train:
+  epochs: 100
+  batch_size: 32
+  buffer_size: 100000
+  learning_rate: 1.0e-05
+seed: 42
+device: cpu

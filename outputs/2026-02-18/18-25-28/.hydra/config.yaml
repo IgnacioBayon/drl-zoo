@@ -1,0 +1,15 @@
+name: dqn
+encoder:
+  in_features: 12
+  conv_layers:
+  - out_features: 16
+    kernel_size: 8
+    strides: 4
+    padding: VALID
+  - out_features: 32
+    kernel_size: 4
+    strides: 2
+    padding: VALID
+  fc_layers:
+  - in_features: 2592
+    out_features: 256
