@@ -36,7 +36,7 @@ def main(cfg: DictConfig) -> None:
         model = RainbowDQN(cfg.model, num_actions=num_actions).to(device)
         out = model(x)
         print("Rainbow logits:", tuple(out["logits"].shape))  # (32, 6, atoms)
-        print("Rainbow q:", tuple(out["q"].shape))            # (32, 6)
+        print("Rainbow q:", tuple(out["q"].shape))  # (32, 6)
 
     else:
         raise ValueError(f"Unknown model: {cfg.model.name}")
