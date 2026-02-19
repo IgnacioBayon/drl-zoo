@@ -1,0 +1,25 @@
+name: dqn
+
+encoder:
+  # input frames: (B, S, H, W, C) -> we convert to (B, S*C, H, W)
+  frame_stack: 4
+  input_channels: 3  # e.g. RGB
+
+  input_height: 84
+  input_width: 84
+
+  conv:
+    - out_channels: 16
+      kernel_size: 8
+      stride: 4
+      padding: 0
+    - out_channels: 32
+      kernel_size: 4
+      stride: 2
+      padding: 0
+
+  mlp:  # in_features will be inferred from conv output
+    - out_features: 256
+
+head:
+  type: linear

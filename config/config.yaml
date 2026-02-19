@@ -1,12 +1,15 @@
 defaults:
-  - models@dqn: dqn
-  - models@rainbow: rainbow
+  - model: dqn        # choose dqn or rainbow
   - train: base
   - _self_
 
 seed: 42
 
 paths:
-  work_dir: ${hydra:runtime.output_dir}
-  log_dir: ${paths.work_dir}/logs
-  ckpt_dir: ${paths.work_dir}/checkpoints
+  run_dir: ${hydra:runtime.output_dir}
+  log_dir: ${paths.run_dir}/logs
+  checkpoint_dir: ${paths.run_dir}/checkpoints
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

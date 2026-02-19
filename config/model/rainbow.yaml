@@ -1,0 +1,32 @@
+name: rainbow
+
+encoder:
+  frame_stack: 4
+  input_channels: 3
+  in_channels: ${eval:${encoder.frame_stack}*${encoder.input_channels}}
+
+  conv:
+    - out_channels: 16
+      kernel_size: 8
+      stride: 4
+      padding: 0
+    - out_channels: 32
+      kernel_size: 4
+      stride: 2
+      padding: 0
+
+  mlp:
+    - in_features: ${eval:${encoder.conv[-1].out_channels} * 9 * 9}
+      out_features: 256
+
+rainbow:
+  atoms: 51
+  vmin: -10.0
+  vmax: 10.0
+
+  dueling: true
+  # noisy: true
+  noisy_init_sigma: 0.5
+
+head:
+  hidden_dim: 256   # explicit head hidden layer size

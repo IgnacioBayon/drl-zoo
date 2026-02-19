@@ -1,121 +1,136 @@
-import jax
-import jax.numpy as jnp
-from flax import nnx
+from typing import Dict
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from omegaconf import DictConfig
 
 
-def stack_to_channels(x: jnp.ndarray) -> jnp.ndarray:
+def stack_to_channels(x: torch.Tensor) -> torch.Tensor:
     """
-    Stacks the S (stacked frames) dimension into channels.
-
-    Args:
-      x: (B, S, H, W, C) input tensor
-    Returns:
-      (B, H, W, S*C) tensor suitable for convolution
+    Input:  (B, S, H, W, C)  (your current format)
+    Output: (B, S*C, H, W)   (Torch Conv2d expects NCHW)
     """
-    B, S, H, W, C = x.shape
-    return x.transpose(0, 2, 3, 1, 4).reshape(B, H, W, S * C)
+    if x.ndim != 5:
+        raise ValueError(f"Expected 5D (B,S,H,W,C), got shape {tuple(x.shape)}")
+
+    b, s, h, w, c = x.shape
+    # (B, S, H, W, C) -> (B, H, W, S, C) -> (B, H, W, S*C) -> (B, S*C, H, W)
+    x = x.permute(0, 2, 3, 1, 4).contiguous().view(b, h, w, s * c)
+    x = x.permute(0, 3, 1, 2).contiguous()
+    # .contiguous() is often needed after permute before view/reshape
+    # to ensure memory layout is correct for the new shape.
+    return x
 
 
-class EncoderDQN(nnx.Module):
-    """Shared Encoder for both DQN and Rainbow DQN. Configurable conv + MLP stack."""
+class EncoderDQN(nn.Module):
+    """Torch-native encoder for DQN: conv stack + flatten + MLP stack."""
 
-    def __init__(self, cfg: DictConfig, *, rngs: nnx.Rngs):
+    def __init__(self, cfg: DictConfig):
+        super().__init__()
+
         # ---- Conv stack ----
-        in_ch = int(cfg.encoder.in_features)
-        self.convs: nnx.List[nnx.Conv] = nnx.List()
-        for layer_cfg in cfg.encoder.conv_layers:
-            out_ch = int(layer_cfg.out_features)
-            self.convs.append(
-                nnx.Conv(
-                    in_features=in_ch,
-                    out_features=out_ch,
-                    kernel_size=(layer_cfg.kernel_size, layer_cfg.kernel_size),
-                    strides=(layer_cfg.strides, layer_cfg.strides),
-                    padding="VALID",
-                    rngs=rngs,
+        in_ch = int(cfg.encoder.input_channels) * int(cfg.encoder.input_channels)
+        conv_layers = []
+        for layer in cfg.encoder.conv:
+            conv_layers.append(
+                nn.Conv2d(
+                    in_channels=in_ch,
+                    out_channels=int(layer.out_channels),
+                    kernel_size=int(layer.kernel_size),
+                    stride=int(layer.stride),
+                    padding=int(layer.padding),
                 )
             )
-            in_ch = out_ch
+            # TODO: is there a ReLU in the original implementation?
+            conv_layers.append(nn.ReLU())
+            in_ch = int(layer.out_channels)
+        self.conv = nn.Sequential(*conv_layers)
+
+        # --- infer flatten dim --- E.g. not having to calculate 32 * 9 * 9
+        with torch.no_grad():
+            h = int(cfg.encoder.input_height)
+            w = int(cfg.encoder.input_width)
+            in_ch = int(cfg.encoder.input_channels)
+
+            dummy_input = torch.zeros(1, in_ch, h, w)
+            conv_out = self.conv(dummy_input)
+            flat_dim = conv_out.view(1, -1).shape[1]
 
         # ---- MLP stack ----
-        self.fcs: nnx.List[nnx.Linear] = nnx.List()
-        for layer_cfg in cfg.encoder.fc_layers:
-            fc_in = int(layer_cfg.in_features)
-            out = int(layer_cfg.out_features)
-            self.fcs.append(nnx.Linear(in_features=fc_in, out_features=out, rngs=rngs))
+        mlp_layers = []
+        prev = flat_dim
+        for layer in cfg.encoder.mlp:
+            out = int(layer.out_features)
+            mlp_layers.append(nn.Linear(prev, out))
+            mlp_layers.append(nn.ReLU())
+            prev = out
+            last_out = out
 
-    def __call__(self, x):
+        self.mlp = nn.Sequential(*mlp_layers)
+        self.latent_dim = int(last_out)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = stack_to_channels(x)
-
-        for conv in self.convs:
-            x = nnx.relu(conv(x))
-
-        x = x.reshape((x.shape[0], -1))
-
-        for fc in self.fcs:
-            x = nnx.relu(fc(x))
-
+        x = self.conv(x)
+        x = torch.flatten(x, start_dim=1)  # flatten all but batch dimension
+        x = self.mlp(x)
         return x
 
 
-class DQN(nnx.Module):
+# --- DQN ---
+
+
+class DQN(nn.Module):
     """DQN implementation with a shared encoder and a simple linear head for Q-values."""
 
-    def __init__(self, cfg: DictConfig, num_actions: int, *, rngs: nnx.Rngs):
-        self.encoder = EncoderDQN(cfg=cfg, rngs=rngs)
-        self.head = nnx.Linear(
-            in_features=int(cfg.encoder.fc_layers[-1].out_features),
-            out_features=num_actions,
-            rngs=rngs,
-        )
+    def __init__(self, cfg: DictConfig, num_actions: int):
+        super().__init__()
 
-    def __call__(self, x):
-        x = self.encoder(x)
-        return self.head(x)
+        self.encoder = EncoderDQN(cfg=cfg)
+        self.head = nn.Linear(self.encoder.latent_dim, num_actions)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        z = self.encoder(x)
+        return self.head(z)
 
 
 # --- RAINBOW DQN ---
 
 
-class NoisyLinear(nnx.Module):
-    """Noisy linear layer as described in "Noisy Networks for Exploration" (Fortunato et al., 2017)."""
+class NoisyLinear(nn.Module):
+    """Torch-native NoisyLinear layer as described in "Noisy Networks for Exploration" (Fortunato et al., 2017)."""
 
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        noisy_init_sigma: float,
-        rngs: nnx.Rngs,
-    ):
-        self.rngs = rngs
+    def __init__(self, in_features: int, out_features: int, sigma0: float):
+        super().__init__()
 
-        # Learnable parameters
-        self.weight_mu = nnx.Param(
-            jax.random.uniform(
-                rngs.params(), (out_features, in_features), minval=-0.1, maxval=0.1
-            )
+        # Learnable parameters for mean and sigma of weights and biases
+        self.weight_mu = nn.Parameter(
+            torch.empty(out_features, in_features).uniform_(-0.1, 0.1),
         )
-        self.bias_mu = nnx.Param(
-            jax.random.uniform(rngs.params(), (out_features,), minval=-0.1, maxval=0.1)
+        self.bias_mu = nn.Parameter(
+            torch.empty(out_features).uniform_(-0.1, 0.1),
         )
 
-        init_sigma = noisy_init_sigma / jnp.sqrt(in_features)
-        self.weight_sigma = nnx.Param(jnp.full((out_features, in_features), init_sigma))
-        self.bias_sigma = nnx.Param(jnp.full((out_features,), init_sigma))
+        init_sigma = sigma0 / (in_features**0.5)
+        self.weight_sigma = nn.Parameter(
+            torch.full((out_features, in_features), init_sigma),
+        )
+        self.bias_sigma = nn.Parameter(
+            torch.full((out_features,), init_sigma),
+        )
 
-    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        weight_noise = jax.random.normal(self.rngs.params(), self.weight_mu.shape)
-        bias_noise = jax.random.normal(self.rngs.params(), self.bias_mu.shape)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.training:
+            w = self.weight_mu + self.weight_sigma * torch.randn_like(self.weight_sigma)
+            b = self.bias_mu + self.bias_sigma * torch.randn_like(self.bias_sigma)
+        else:
+            w = self.weight_mu
+            b = self.bias_mu
+        return F.linear(x, w, b)
 
-        # Create noisy weights and biases
-        weight = self.weight_mu + self.weight_sigma * weight_noise
-        bias = self.bias_mu + self.bias_sigma * bias_noise
 
-        return x @ weight.T + bias
-
-
-class DuelingHead(nnx.Module):
+class DuelingHead(nn.Module):
     """
     Dueling DQN head that outputs (B, A, atoms) logits for the distributional version.
     Implemented as described in "Dueling Network Architectures for Deep Reinforcement Learning" (Wang et al., 2016).
@@ -126,56 +141,73 @@ class DuelingHead(nnx.Module):
         latent_dim: int,
         num_actions: int,
         atoms: int,
-        noisy_init_sigma: float,
-        *,
-        rngs: nnx.Rngs,
+        hidden_dim: int,
+        sigma0: float,
     ):
+        super().__init__()
+
         self.num_actions = num_actions
         self.atoms = atoms
 
-        hidden = latent_dim  # you can make this configurable
-
         # Value stream: (B, atoms)
-        self.v1 = NoisyLinear(latent_dim, hidden, noisy_init_sigma, rngs=rngs)
-        self.v2 = NoisyLinear(hidden, atoms, noisy_init_sigma, rngs=rngs)
+        self.v1 = NoisyLinear(latent_dim, hidden_dim, sigma0)
+        self.v2 = NoisyLinear(hidden_dim, atoms, sigma0)
 
         # Advantage stream: (B, A*atoms) -> reshape to (B, A, atoms)
-        self.a1 = NoisyLinear(latent_dim, hidden, noisy_init_sigma, rngs=rngs)
-        self.a2 = NoisyLinear(hidden, num_actions * atoms, noisy_init_sigma, rngs=rngs)
+        self.a1 = NoisyLinear(latent_dim, hidden_dim, sigma0)
+        self.a2 = NoisyLinear(hidden_dim, num_actions * atoms, sigma0)
 
-    def __call__(self, z: jnp.ndarray) -> jnp.ndarray:
-        v = nnx.relu(self.v1(z))
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        v = F.relu(self.v1(z))
         v = self.v2(v)  # (B, atoms)
 
-        a = nnx.relu(self.a1(z))
+        a = F.relu(self.a1(z))
         a = self.a2(a)  # (B, A*atoms)
-        a = a.reshape((a.shape[0], self.num_actions, self.atoms))  # (B, A, atoms)
+        a = a.view(z.size(0), self.num_actions, self.atoms)  # (B, A, atoms)
 
-        v = v[:, None, :]  # (B, 1, atoms)
-        logits = v + (a - a.mean(axis=1, keepdims=True))  # dueling combine
+        v = v.unsqueeze(1)  # (B, 1, atoms)
+        logits = v + (a - a.mean(dim=1, keepdim=True))  # dueling combine
         return logits  # (B, A, atoms)
 
 
-class RainbowDQN(nnx.Module):
+class RainbowDQN(nn.Module):
     """
     Rainbow DQN implementation that combines all the model improvements: dueling architecture and noisy nets.
     Implemented as described in "Rainbow: Combining Improvements in Deep Reinforcement Learning" (Hessel et al., 2017).
     """
 
-    def __init__(self, cfg: DictConfig, num_actions: int, *, rngs: nnx.Rngs):
-        self.encoder = EncoderDQN(cfg=cfg, rngs=rngs)
-        latent_dim = int(cfg.encoder.fc_layers[-1].out_features)
+    def __init__(self, cfg: DictConfig, num_actions: int):
+        super().__init__()
+
+        self.encoder = EncoderDQN(cfg=cfg)
+
+        atoms = int(cfg.rainbow.atoms)
+        vmin = float(cfg.rainbow.vmin)
+        vmax = float(cfg.rainbow.vmax)
+
+        sigma0 = float(cfg.rainbow.noisy_init_sigma)
+        hidden_dim = int(cfg.head.hidden_dim)
 
         self.head = DuelingHead(
-            latent_dim, num_actions, cfg.atoms, cfg.noisy_init_sigma, rngs=rngs
+            latent_dim=self.encoder.latent_dim,
+            num_actions=num_actions,
+            atoms=atoms,
+            hidden_dim=hidden_dim,
+            sigma0=sigma0,
         )
-        self.support = jnp.linspace(cfg.vmin, cfg.vmax, cfg.atoms, dtype=jnp.float32)
 
-    def __call__(self, x: jnp.ndarray):
+        # Support for distributional DQN  # TODO: ???
+        self.register_buffer(
+            "support",
+            torch.linspace(vmin, vmax, atoms),
+        )
+
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         z = self.encoder(x)
         logits = self.head(z)  # (B, A, atoms)
-
-        probs = jax.nn.softmax(logits, axis=-1)
-        q = jnp.sum(probs * self.support[None, None, :], axis=-1)  # (B, A)
-
-        return {"logits": logits, "q": q}
+        probs = F.softmax(logits, dim=-1)  # (B, A, atoms)
+        # Expected Q-values: sum over atoms of (probability * support)
+        # probs has shape (B, A, atoms) and support has shape (atoms,),
+        # so we need to align dimensions for broadcasting.
+        q = torch.sum(probs * self.support.unsqueeze(0).unsqueeze(0), dim=-1)  # (B, A)
+        return {"logits": logits, "probs": probs, "q": q}

@@ -7,11 +7,15 @@ from dotenv import load_dotenv
 from omegaconf import DictConfig
 
 
-def prepare_run_dirs(cfg: DictConfig, run_dir: Path):
-    # TODO: modify created folders
-    os.makedirs(run_dir, exist_ok=True)
-    os.makedirs(cfg.paths.ckpt_dir, exist_ok=True)
-    os.makedirs(cfg.paths.log_dir, exist_ok=True)
+def prepare_run_dirs(cfg: DictConfig) -> Path:
+    run_dir = Path(cfg.paths.run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    Path(cfg.paths.checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    Path(cfg.paths.log_dir).mkdir(parents=True, exist_ok=True)
+
+    return run_dir
+
 
 
 def send_mail(content: str, receiver: str):
