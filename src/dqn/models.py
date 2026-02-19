@@ -4,16 +4,6 @@ import jax.numpy as jnp
 from flax import nnx
 from omegaconf import DictConfig
 
-# import hydra
-# @hydra.main(version_base=None, config_path="config/algorithms", config_name="dqn")
-# def main(cfg: DictConfig) -> None:
-#     rngs = nnx.Rngs(params=jax.random.PRNGKey(0))
-#     model = DQN(cfg=cfg, num_actions=6, rngs=rngs)
-
-#     x = jnp.zeros((32, 4, 84, 84, 3), dtype=jnp.float32)
-#     q = model(x)
-#     print(q.shape)
-
 
 def stack_to_channels(x: jnp.ndarray) -> jnp.ndarray:
     """
@@ -29,6 +19,8 @@ def stack_to_channels(x: jnp.ndarray) -> jnp.ndarray:
 
 
 class EncoderDQN(nnx.Module):
+    """Shared Encoder for both DQN and Rainbow DQN. Configurable conv + MLP stack."""
+
     def __init__(self, cfg: DictConfig, num_actions: int, *, rngs: nnx.Rngs):
         self.num_actions = num_actions
 
@@ -71,6 +63,8 @@ class EncoderDQN(nnx.Module):
 
 
 class DQN(nnx.Module):
+    """DQN implementation with a shared encoder and a simple linear head for Q-values."""
+
     def __init__(self, cfg: DictConfig, num_actions: int, *, rngs: nnx.Rngs):
         self.encoder = EncoderDQN(cfg=cfg, num_actions=num_actions, rngs=rngs)
         self.head = nnx.Linear(
@@ -88,6 +82,8 @@ class DQN(nnx.Module):
 
 
 class NoisyLinear(nnx.Module):
+    """Noisy linear layer as described in "Noisy Networks for Exploration" (Fortunato et al., 2017)."""
+
     def __init__(self, in_features: int, out_features: int, *, rngs: nnx.Rngs):
         self.in_features = in_features
         self.out_features = out_features
@@ -116,7 +112,12 @@ class NoisyLinear(nnx.Module):
         return x @ weight.T + bias
 
 
-class DuelingC51Head(nnx.Module):
+class DuelingHead(nnx.Module):
+    """
+    Dueling DQN head that outputs (B, A, atoms) logits for the distributional version.
+    Implemented as described in "Dueling Network Architectures for Deep Reinforcement Learning" (Wang et al., 2016).
+    """
+
     def __init__(
         self, latent_dim: int, num_actions: int, atoms: int, *, rngs: nnx.Rngs
     ):
@@ -147,6 +148,11 @@ class DuelingC51Head(nnx.Module):
 
 
 class RainbowDQN(nnx.Module):
+    """
+    Rainbow DQN implementation that combines all the model improvements: dueling architecture and noisy nets.
+    Implemented as described in "Rainbow: Combining Improvements in Deep Reinforcement Learning" (Hessel et al., 2017).
+    """
+
     def __init__(self, cfg: DictConfig, num_actions: int, *, rngs: nnx.Rngs):
         self.num_actions = num_actions
         self.atoms = int(cfg.atoms)
@@ -156,7 +162,7 @@ class RainbowDQN(nnx.Module):
         self.encoder = EncoderDQN(cfg=cfg, num_actions=num_actions, rngs=rngs)
         latent_dim = int(cfg.encoder.fc_layers[-1].out_features)
 
-        self.head = DuelingC51Head(latent_dim, num_actions, self.atoms, rngs=rngs)
+        self.head = DuelingHead(latent_dim, num_actions, self.atoms, rngs=rngs)
         self.support = jnp.linspace(self.vmin, self.vmax, self.atoms, dtype=jnp.float32)
 
     def __call__(self, x: jnp.ndarray):

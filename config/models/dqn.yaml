@@ -1,3 +1,4 @@
+# DQN configuration as implemented by Minh et al. in "Playing Atari with Deep Reinforcement Learning" (2013).
 name: dqn
 
 encoder:
