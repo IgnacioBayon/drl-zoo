@@ -51,7 +51,7 @@ class EncoderDQN(nn.Module):
         with torch.no_grad():
             h = int(cfg.encoder.input_height)
             w = int(cfg.encoder.input_width)
-            in_ch = int(cfg.encoder.input_channels * cfg.encoder.frame_stack)
+            in_ch = int(cfg.encoder.input_channels) * int(cfg.encoder.frame_stack)
 
             dummy_input = torch.zeros(1, in_ch, h, w)
             conv_out = self.conv(dummy_input)

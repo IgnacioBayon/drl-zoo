@@ -25,7 +25,17 @@ def main(cfg: DictConfig) -> None:
     num_actions = 6
 
     # Smoke test input (same shape as before): (B, S, H, W, C)
-    x = torch.zeros((32, 4, 84, 84, 3), dtype=torch.float32, device=device)
+    x = torch.zeros(
+        (
+            cfg.train.batch_size,
+            cfg.model.encoder.frame_stack,
+            cfg.model.encoder.input_height,
+            cfg.model.encoder.input_width,
+            cfg.model.encoder.input_channels,
+        ),
+        dtype=torch.float32,
+        device=device,
+    )
 
     if cfg.model.name == "dqn":
         model = DQN(cfg.model, num_actions=num_actions).to(device)
