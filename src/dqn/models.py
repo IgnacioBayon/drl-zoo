@@ -91,23 +91,23 @@ class NoisyLinear(nnx.Module):
     def __init__(self, in_features: int, out_features: int, *, rngs: nnx.Rngs):
         self.in_features = in_features
         self.out_features = out_features
+        self.rngs = rngs
 
         # Learnable parameters
-        self.weight_mu = nnx.Parameter(
+        self.weight_mu = nnx.Param(
             jax.random.uniform(
-                rngs.params, (out_features, in_features), minval=-0.1, maxval=0.1
+                rngs.params(), (out_features, in_features), minval=-0.1, maxval=0.1
             )
         )
-        self.weight_sigma = nnx.Parameter(jnp.full((out_features, in_features), 0.017))
-        self.bias_mu = nnx.Parameter(
-            jax.random.uniform(rngs.params, (out_features,), minval=-0.1, maxval=0.1)
+        self.weight_sigma = nnx.Param(jnp.full((out_features, in_features), 0.017))
+        self.bias_mu = nnx.Param(
+            jax.random.uniform(rngs.params(), (out_features,), minval=-0.1, maxval=0.1)
         )
-        self.bias_sigma = nnx.Parameter(jnp.full((out_features,), 0.017))
+        self.bias_sigma = nnx.Param(jnp.full((out_features,), 0.017))
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # Sample noise
-        weight_noise = jax.random.normal(self.rngs.params, self.weight_mu.shape)
-        bias_noise = jax.random.normal(self.rngs.params, self.bias_mu.shape)
+        weight_noise = jax.random.normal(self.rngs.params(), self.weight_mu.shape)
+        bias_noise = jax.random.normal(self.rngs.params(), self.bias_mu.shape)
 
         # Create noisy weights and biases
         weight = self.weight_mu + self.weight_sigma * weight_noise
@@ -149,9 +149,9 @@ class DuelingC51Head(nnx.Module):
 class RainbowDQN(nnx.Module):
     def __init__(self, cfg: DictConfig, num_actions: int, *, rngs: nnx.Rngs):
         self.num_actions = num_actions
-        self.atoms = int(cfg.rainbow.atoms)
-        self.vmin = float(cfg.rainbow.vmin)
-        self.vmax = float(cfg.rainbow.vmax)
+        self.atoms = int(cfg.atoms)
+        self.vmin = float(cfg.vmin)
+        self.vmax = float(cfg.vmax)
 
         self.encoder = EncoderDQN(cfg=cfg, num_actions=num_actions, rngs=rngs)
         latent_dim = int(cfg.encoder.fc_layers[-1].out_features)
@@ -170,14 +170,17 @@ class RainbowDQN(nnx.Module):
 
 
 # --- Minimal usage example ---
-@hydra.main(version_base=None, config_path="../../config/models", config_name="dqn")
+@hydra.main(version_base=None, config_path="../../config", config_name="config")
 def main(cfg: DictConfig):
-    rngs = nnx.Rngs(params=jax.random.PRNGKey(0))
-    model = DQN(cfg, num_actions=6, rngs=rngs)
+    rngs = nnx.Rngs(params=jax.random.PRNGKey(cfg.seed))
+    dqn = DQN(cfg.dqn, num_actions=6, rngs=rngs)
+    rainbow = RainbowDQN(cfg.rainbow, num_actions=6, rngs=rngs)
 
     x = jnp.zeros((32, 4, 84, 84, 3), dtype=jnp.float32)
-    q = model(x)
+    q = dqn(x)
+    q_rainbow = rainbow(x)
     print(q.shape)  # (32, 6)
+    print(q_rainbow["q"].shape)  # (32, 6)
 
 
 if __name__ == "__main__":
