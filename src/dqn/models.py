@@ -86,20 +86,52 @@ class DQN(nnx.Module):
 
 # --- RAINBOW DQN ---
 
+
+class NoisyLinear(nnx.Module):
+    def __init__(self, in_features: int, out_features: int, *, rngs: nnx.Rngs):
+        self.in_features = in_features
+        self.out_features = out_features
+
+        # Learnable parameters
+        self.weight_mu = nnx.Parameter(
+            jax.random.uniform(
+                rngs.params, (out_features, in_features), minval=-0.1, maxval=0.1
+            )
+        )
+        self.weight_sigma = nnx.Parameter(jnp.full((out_features, in_features), 0.017))
+        self.bias_mu = nnx.Parameter(
+            jax.random.uniform(rngs.params, (out_features,), minval=-0.1, maxval=0.1)
+        )
+        self.bias_sigma = nnx.Parameter(jnp.full((out_features,), 0.017))
+
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        # Sample noise
+        weight_noise = jax.random.normal(self.rngs.params, self.weight_mu.shape)
+        bias_noise = jax.random.normal(self.rngs.params, self.bias_mu.shape)
+
+        # Create noisy weights and biases
+        weight = self.weight_mu + self.weight_sigma * weight_noise
+        bias = self.bias_mu + self.bias_sigma * bias_noise
+
+        return x @ weight.T + bias
+
+
 class DuelingC51Head(nnx.Module):
-    def __init__(self, latent_dim: int, num_actions: int, atoms: int, *, rngs: nnx.Rngs):
+    def __init__(
+        self, latent_dim: int, num_actions: int, atoms: int, *, rngs: nnx.Rngs
+    ):
         self.num_actions = num_actions
         self.atoms = atoms
 
         hidden = latent_dim  # you can make this configurable
 
         # Value stream: (B, atoms)
-        self.v1 = nnx.Linear(latent_dim, hidden, rngs=rngs)
-        self.v2 = nnx.Linear(hidden, atoms, rngs=rngs)
+        self.v1 = NoisyLinear(latent_dim, hidden, rngs=rngs)
+        self.v2 = NoisyLinear(hidden, atoms, rngs=rngs)
 
         # Advantage stream: (B, A*atoms) -> reshape to (B, A, atoms)
-        self.a1 = nnx.Linear(latent_dim, hidden, rngs=rngs)
-        self.a2 = nnx.Linear(hidden, num_actions * atoms, rngs=rngs)
+        self.a1 = NoisyLinear(latent_dim, hidden, rngs=rngs)
+        self.a2 = NoisyLinear(hidden, num_actions * atoms, rngs=rngs)
 
     def __call__(self, z: jnp.ndarray) -> jnp.ndarray:
         v = nnx.relu(self.v1(z))
