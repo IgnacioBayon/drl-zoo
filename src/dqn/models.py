@@ -20,9 +20,7 @@ def stack_to_channels(x: jnp.ndarray) -> jnp.ndarray:
 class EncoderDQN(nnx.Module):
     """Shared Encoder for both DQN and Rainbow DQN. Configurable conv + MLP stack."""
 
-    def __init__(self, cfg: DictConfig, num_actions: int, *, rngs: nnx.Rngs):
-        self.num_actions = num_actions
-
+    def __init__(self, cfg: DictConfig, *, rngs: nnx.Rngs):
         # ---- Conv stack ----
         in_ch = int(cfg.encoder.in_features)
         self.convs: nnx.List[nnx.Conv] = nnx.List()
@@ -65,7 +63,7 @@ class DQN(nnx.Module):
     """DQN implementation with a shared encoder and a simple linear head for Q-values."""
 
     def __init__(self, cfg: DictConfig, num_actions: int, *, rngs: nnx.Rngs):
-        self.encoder = EncoderDQN(cfg=cfg, num_actions=num_actions, rngs=rngs)
+        self.encoder = EncoderDQN(cfg=cfg, rngs=rngs)
         self.head = nnx.Linear(
             in_features=int(cfg.encoder.fc_layers[-1].out_features),
             out_features=num_actions,
@@ -84,8 +82,6 @@ class NoisyLinear(nnx.Module):
     """Noisy linear layer as described in "Noisy Networks for Exploration" (Fortunato et al., 2017)."""
 
     def __init__(self, in_features: int, out_features: int, *, rngs: nnx.Rngs):
-        self.in_features = in_features
-        self.out_features = out_features
         self.rngs = rngs
 
         # Learnable parameters
@@ -153,16 +149,11 @@ class RainbowDQN(nnx.Module):
     """
 
     def __init__(self, cfg: DictConfig, num_actions: int, *, rngs: nnx.Rngs):
-        self.num_actions = num_actions
-        self.atoms = int(cfg.atoms)
-        self.vmin = float(cfg.vmin)
-        self.vmax = float(cfg.vmax)
-
-        self.encoder = EncoderDQN(cfg=cfg, num_actions=num_actions, rngs=rngs)
+        self.encoder = EncoderDQN(cfg=cfg, rngs=rngs)
         latent_dim = int(cfg.encoder.fc_layers[-1].out_features)
 
-        self.head = DuelingHead(latent_dim, num_actions, self.atoms, rngs=rngs)
-        self.support = jnp.linspace(self.vmin, self.vmax, self.atoms, dtype=jnp.float32)
+        self.head = DuelingHead(latent_dim, num_actions, cfg.atoms, rngs=rngs)
+        self.support = jnp.linspace(cfg.vmin, cfg.vmax, cfg.atoms, dtype=jnp.float32)
 
     def __call__(self, x: jnp.ndarray):
         z = self.encoder(x)
