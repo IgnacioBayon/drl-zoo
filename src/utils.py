@@ -1,8 +1,17 @@
 import os
 import smtplib
 from email.message import EmailMessage
+from pathlib import Path
 
 from dotenv import load_dotenv
+from omegaconf import DictConfig
+
+
+def prepare_run_dirs(cfg: DictConfig, run_dir: Path):
+    # TODO: modify created folders
+    os.makedirs(run_dir, exist_ok=True)
+    os.makedirs(cfg.paths.ckpt_dir, exist_ok=True)
+    os.makedirs(cfg.paths.log_dir, exist_ok=True)
 
 
 def send_mail(content: str, receiver: str):
