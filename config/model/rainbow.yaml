@@ -1,9 +1,12 @@
 name: rainbow
 
 encoder:
+  # input frames: (B, S, H, W, C) -> we convert to (B, S*C, H, W)
   frame_stack: 4
-  input_channels: 3
-  in_channels: ${eval:${encoder.frame_stack}*${encoder.input_channels}}
+  input_channels: 3  # e.g. RGB
+
+  input_height: 84
+  input_width: 84
 
   conv:
     - out_channels: 16
@@ -15,9 +18,8 @@ encoder:
       stride: 2
       padding: 0
 
-  mlp:
-    - in_features: ${eval:${encoder.conv[-1].out_channels} * 9 * 9}
-      out_features: 256
+  mlp:  # in_features will be inferred from conv output
+    - out_features: 256
 
 rainbow:
   atoms: 51
