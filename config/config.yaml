@@ -1,5 +1,6 @@
 defaults:
-  - models: dqn
+  - models@dqn: dqn
+  - models@rainbow: rainbow
   - train: base
   - _self_
 

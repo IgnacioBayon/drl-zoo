@@ -1,4 +1,4 @@
-name: dqn
+name: rainbow
 
 encoder:
   in_features: 12
@@ -18,4 +18,6 @@ encoder:
       out_features: 256
     # Add more layers if needed
 
-
+atoms: 50
+vmin: -10.0
+vmax: 10.0
