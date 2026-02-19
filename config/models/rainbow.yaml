@@ -21,3 +21,4 @@ encoder:
 atoms: 51
 vmin: -10.0
 vmax: 10.0
+noisy_init_sigma: 0.5

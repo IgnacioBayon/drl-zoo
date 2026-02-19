@@ -81,7 +81,13 @@ class DQN(nnx.Module):
 class NoisyLinear(nnx.Module):
     """Noisy linear layer as described in "Noisy Networks for Exploration" (Fortunato et al., 2017)."""
 
-    def __init__(self, in_features: int, out_features: int, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        noisy_init_sigma: float,
+        rngs: nnx.Rngs,
+    ):
         self.rngs = rngs
 
         # Learnable parameters
@@ -90,11 +96,13 @@ class NoisyLinear(nnx.Module):
                 rngs.params(), (out_features, in_features), minval=-0.1, maxval=0.1
             )
         )
-        self.weight_sigma = nnx.Param(jnp.full((out_features, in_features), 0.017))
         self.bias_mu = nnx.Param(
             jax.random.uniform(rngs.params(), (out_features,), minval=-0.1, maxval=0.1)
         )
-        self.bias_sigma = nnx.Param(jnp.full((out_features,), 0.017))
+
+        init_sigma = noisy_init_sigma / jnp.sqrt(in_features)
+        self.weight_sigma = nnx.Param(jnp.full((out_features, in_features), init_sigma))
+        self.bias_sigma = nnx.Param(jnp.full((out_features,), init_sigma))
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         weight_noise = jax.random.normal(self.rngs.params(), self.weight_mu.shape)
@@ -114,7 +122,13 @@ class DuelingHead(nnx.Module):
     """
 
     def __init__(
-        self, latent_dim: int, num_actions: int, atoms: int, *, rngs: nnx.Rngs
+        self,
+        latent_dim: int,
+        num_actions: int,
+        atoms: int,
+        noisy_init_sigma: float,
+        *,
+        rngs: nnx.Rngs,
     ):
         self.num_actions = num_actions
         self.atoms = atoms
@@ -122,12 +136,12 @@ class DuelingHead(nnx.Module):
         hidden = latent_dim  # you can make this configurable
 
         # Value stream: (B, atoms)
-        self.v1 = NoisyLinear(latent_dim, hidden, rngs=rngs)
-        self.v2 = NoisyLinear(hidden, atoms, rngs=rngs)
+        self.v1 = NoisyLinear(latent_dim, hidden, noisy_init_sigma, rngs=rngs)
+        self.v2 = NoisyLinear(hidden, atoms, noisy_init_sigma, rngs=rngs)
 
         # Advantage stream: (B, A*atoms) -> reshape to (B, A, atoms)
-        self.a1 = NoisyLinear(latent_dim, hidden, rngs=rngs)
-        self.a2 = NoisyLinear(hidden, num_actions * atoms, rngs=rngs)
+        self.a1 = NoisyLinear(latent_dim, hidden, noisy_init_sigma, rngs=rngs)
+        self.a2 = NoisyLinear(hidden, num_actions * atoms, noisy_init_sigma, rngs=rngs)
 
     def __call__(self, z: jnp.ndarray) -> jnp.ndarray:
         v = nnx.relu(self.v1(z))
@@ -152,7 +166,9 @@ class RainbowDQN(nnx.Module):
         self.encoder = EncoderDQN(cfg=cfg, rngs=rngs)
         latent_dim = int(cfg.encoder.fc_layers[-1].out_features)
 
-        self.head = DuelingHead(latent_dim, num_actions, cfg.atoms, rngs=rngs)
+        self.head = DuelingHead(
+            latent_dim, num_actions, cfg.atoms, cfg.noisy_init_sigma, rngs=rngs
+        )
         self.support = jnp.linspace(cfg.vmin, cfg.vmax, cfg.atoms, dtype=jnp.float32)
 
     def __call__(self, x: jnp.ndarray):
