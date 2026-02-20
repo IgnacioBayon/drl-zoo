@@ -1,8 +1,24 @@
-device: auto   # auto|cpu|cuda
+device: auto   # auto | cpu | cuda
 
+# optimiser
 lr: 3e-4
+
+# RL
 gamma: 0.99
+total_frames: 1_000_000
+
+# replay buffer
+buffer_size: 200_000
 batch_size: 32
 
-# later
-target_update_period: 1000
+# exploration (linear ε-decay)
+epsilon_start: 1.0
+epsilon_end: 0.1
+epsilon_anneal_frames: 500_000
+
+# network updates
+train_every: 4               # gradient step every N env frames
+target_update_frames: 10_000  # hard copy policy → target
+
+# logging / recording
+video_log_frames: 10_000     # record a test episode every N frames

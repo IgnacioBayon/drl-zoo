@@ -6,6 +6,44 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 
 
+class DQNetwork(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        in_resolution: tuple[int],
+        action_bins: int,
+        num_branches: int,
+        **kwargs,
+    ):
+        super().__init__()
+        self.num_branches = num_branches
+        self.action_bins = action_bins
+
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels, 32, 8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, stride=1),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+        dummy_input = torch.zeros(1, in_channels, *in_resolution)
+        with torch.no_grad():
+            dummy_output = self.encoder(dummy_input)
+        conv_out_size = dummy_output.view(1, -1).shape[1]
+        self.fc = nn.Sequential(nn.Linear(conv_out_size, 512), nn.ReLU())
+
+        # Branching output: one massive linear layer, reshaped later
+        self.branches = nn.Linear(512, num_branches * action_bins)
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.fc(x)
+        logits = self.branches(x)
+        return logits.view(-1, self.num_branches, self.action_bins)
+
+
 def stack_to_channels(x: torch.Tensor) -> torch.Tensor:
     """
     Input:  (B, S, H, W, C)  (your current format)

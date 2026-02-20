@@ -1,6 +1,7 @@
 defaults:
   - model: dqn        # choose dqn or rainbow
   - train: base
+  - env: hopper
   - _self_
 
 seed: 42
@@ -9,6 +10,7 @@ paths:
   run_dir: ${hydra:runtime.output_dir}
   log_dir: ${paths.run_dir}/logs
   checkpoint_dir: ${paths.run_dir}/checkpoints
+  video_dir: ${paths.run_dir}/videos
 
 hydra:
   run:

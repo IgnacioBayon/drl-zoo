@@ -1,58 +1,29 @@
-from pathlib import Path
-
 import hydra
 import torch
 from omegaconf import DictConfig
 
-from src.dqn.models import DQN, RainbowDQN
+from src.dqn.train_dqn import train_dqn
 from src.utils import prepare_run_dirs
 
+_TRAINERS = {
+    "dqn": train_dqn,
+    # "rainbow": train_rainbow,  # TODO: implement
+}
 
-def get_device(device_cfg: str) -> torch.device:
-    if device_cfg == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(device_cfg)
 
-
-@hydra.main(version_base="1.3", config_path="pkg://config", config_name="config")
+@hydra.main(version_base="1.3", config_path="../config", config_name="config")
 def main(cfg: DictConfig) -> None:
-    run_dir: Path = prepare_run_dirs(cfg)
-    print("Run dir:", run_dir)
-
-    device = get_device(str(cfg.train.device))
+    """Entry point: seed, prepare dirs, and dispatch to the right trainer."""
     torch.manual_seed(int(cfg.seed))
+    prepare_run_dirs(cfg)
 
-    num_actions = 6
-
-    # Smoke test input (same shape as before): (B, S, H, W, C)
-    x = torch.zeros(
-        (
-            cfg.train.batch_size,
-            cfg.model.encoder.frame_stack,
-            cfg.model.encoder.input_height,
-            cfg.model.encoder.input_width,
-            cfg.model.encoder.input_channels,
-        ),
-        dtype=torch.float32,
-        device=device,
-    )
-
-    if cfg.model.name == "dqn":
-        model = DQN(cfg.model, num_actions=num_actions).to(device)
-        q = model(x)
-        print("DQN q:", tuple(q.shape))  # (32, 6)
-
-    elif cfg.model.name == "rainbow":
-        model = RainbowDQN(cfg.model, num_actions=num_actions).to(device)
-        out = model(x)
-        print("Rainbow logits:", tuple(out["logits"].shape))  # (32, 6, atoms)
-        print("Rainbow q:", tuple(out["q"].shape))  # (32, 6)
-
-    else:
-        raise ValueError(f"Unknown model: {cfg.model.name}")
-
-    n_params = sum(p.numel() for p in model.parameters())
-    print(f"{cfg.model.name} params: {n_params:,}")
+    model_name: str = cfg.model.name
+    trainer = _TRAINERS.get(model_name)
+    if trainer is None:
+        raise ValueError(
+            f"Unknown model '{model_name}'. Choose from: {list(_TRAINERS)}"
+        )
+    trainer(cfg)
 
 
 if __name__ == "__main__":

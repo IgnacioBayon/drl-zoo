@@ -3,8 +3,15 @@ import smtplib
 from email.message import EmailMessage
 from pathlib import Path
 
+import torch
 from dotenv import load_dotenv
 from omegaconf import DictConfig
+
+
+def get_device(device_cfg: str) -> torch.device:
+    if device_cfg == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(device_cfg)
 
 
 def prepare_run_dirs(cfg: DictConfig) -> Path:
@@ -15,7 +22,6 @@ def prepare_run_dirs(cfg: DictConfig) -> Path:
     Path(cfg.paths.log_dir).mkdir(parents=True, exist_ok=True)
 
     return run_dir
-
 
 
 def send_mail(content: str, receiver: str):
