@@ -14,4 +14,5 @@ paths:
 
 hydra:
   run:
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    # dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: outputs/run_${now:%Y%m%d_%H%M%S}_${env.name}_${model.name}

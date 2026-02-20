@@ -10,9 +10,11 @@ dependencies = [
     "matplotlib>=3.10.8",
     "gymnasium[mujoco]>=1.2.3",
     "imageio[ffmpeg]>=2.37.2",
+    "tensorboard>=2.18.0",
     "torch>=2.0.0",
     "torchvision>=0.15.0",
     "tqdm>=4.67.3",
+    "setuptools<82",
 ]
 
 [[tool.uv.index]]

@@ -21,4 +21,7 @@ train_every: 4               # gradient step every N env frames
 target_update_frames: 10_000  # hard copy policy → target
 
 # logging / recording
-video_log_frames: 10_000     # record a test episode every N frames
+eval_interval_frames: 10_000  # evaluate & record every N frames
+eval_episodes: 30             # number of greedy episodes per evaluation
+checkpoint_frames: 100_000    # save weights every N frames (~10 per run)
+log_interval_frames: 5_000    # tensorboard scalar logging interval
