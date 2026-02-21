@@ -17,15 +17,37 @@ from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
 
 from src.environment import build_from_config
-from src.utils import get_device
+from src.utils import get_device, get_loss_fn
 
 from .models import DQNetwork
 
 log = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _save_checkpoint(
+    policy: DQNetwork,
+    optimizer: torch.optim.Optimizer,
+    global_step: int,
+    checkpoint_dir: str,
+    name: str = "",
+) -> None:
+    """Save model and optimizer state to disk."""
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    filename = name or f"ckpt_{global_step}.pt"
+    path = os.path.join(checkpoint_dir, filename)
+    torch.save(
+        {
+            "global_step": global_step,
+            "policy": policy.state_dict(),
+            "optimizer": optimizer.state_dict(),
+        },
+        path,
+    )
 
 
 def _run_eval_episode(
@@ -34,6 +56,7 @@ def _run_eval_episode(
     train_resolution: tuple[int, int],
     device: torch.device,
     record: bool = False,
+    seed: int | None = None,
 ) -> tuple[float, float, float, list[np.ndarray]]:
     """Run one greedy episode. Optionally capture render frames.
 
@@ -44,7 +67,7 @@ def _run_eval_episode(
         frames: Rendered RGB frames (empty when ``record=False``).
     """
     env = build_from_config(env_cfg, mode="eval")
-    obs, _ = env.reset()
+    obs, _ = env.reset(seed=seed)
     frames: list[np.ndarray] = []
     total_reward = 0.0
     done = False
@@ -53,7 +76,10 @@ def _run_eval_episode(
         while not done:
             if record:
                 frames.append(env.unwrapped.render())
-            state_t = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0) / 255.0
+            state_t = (
+                torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                / 255.0
+            )
             state_t = F.interpolate(
                 state_t, size=train_resolution, mode="bilinear", align_corners=False
             )
@@ -82,11 +108,17 @@ def _evaluate_and_record(
     device: torch.device,
     writer: SummaryWriter,
     n_episodes: int,
+    best_mean_reward: float = float("-inf"),
 ) -> tuple[float, float, float, str]:
-    """Run *n_episodes* greedy evaluations, record only the best one.
+    """Run *n_episodes* greedy evaluations, optionally record a video.
+
+    Args:
+        record: When True, run an extra greedy episode, render it and save
+            the resulting ``.mp4`` to *video_dir*.
 
     Returns:
-        mean, std, max of episode rewards and the path to the saved video.
+        mean, std, max of episode rewards and the path to the saved video
+        (empty string when ``record=False``).
     """
     policy.eval()
 
@@ -96,26 +128,34 @@ def _evaluate_and_record(
     final_com_xs = np.empty(n_episodes, dtype=np.float64)
     for i in range(n_episodes):
         returns[i], final_torso_xs[i], final_com_xs[i], _ = _run_eval_episode(
-            policy, env_cfg, train_resolution, device, record=False
+            policy,
+            env_cfg,
+            train_resolution,
+            device,
+            record=False,
+            seed=int(step) + i,
         )
 
-    mean_r, std_r, max_r = (
-        float(returns.mean()),
-        float(returns.std()),
-        float(returns.max()),
-    )
+    mean_r, std_r = float(returns.mean()), float(returns.std())
+    best_idx = int(returns.argmax())
+    max_r = float(returns[best_idx])
 
     # Second pass: re-run one episode with recording to save the best video
-    _, _, _, frames = _run_eval_episode(
-        policy, env_cfg, train_resolution, device, record=True
-    )
+    filename = ""
+    if mean_r > best_mean_reward:
+        _, _, _, frames = _run_eval_episode(
+            policy,
+            env_cfg,
+            train_resolution,
+            device,
+            record=True,
+            seed=int(step) + best_idx,
+        )
+        os.makedirs(video_dir, exist_ok=True)
+        filename = os.path.join(video_dir, f"eval_step_{step}_reward_{mean_r:.2f}.mp4")
+        imageio.mimsave(filename, frames, fps=30)
 
     policy.train()
-
-    # Save recording .mp4
-    os.makedirs(video_dir, exist_ok=True)
-    filename = os.path.join(video_dir, f"eval_step_{step}.mp4")
-    imageio.mimsave(filename, frames, fps=30)
 
     # Tensorboard logs
     writer.add_scalar("eval/mean_reward", mean_r, step)
@@ -138,6 +178,7 @@ def _train_step(
     policy: DQNetwork,
     target_policy: DQNetwork,
     optimizer: torch.optim.Optimizer,
+    loss_fn: torch.nn.Module,
     buf_filled: int,
     buf_idx: int,
     num_envs: int,
@@ -174,33 +215,12 @@ def _train_step(
         max_target_q = target_policy(next_states).max(dim=2).values  # (B, Branches)
         targets = rewards.unsqueeze(1) + gamma * max_target_q * (1 - dones.unsqueeze(1))
 
-    loss = F.mse_loss(q_taken, targets)
+    loss = loss_fn(q_taken, targets)
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
     # Return detached scalar — avoids a GPU sync on every training step.
     return loss.detach()
-
-
-def _save_checkpoint(
-    policy: DQNetwork,
-    optimizer: torch.optim.Optimizer,
-    global_step: int,
-    checkpoint_dir: str,
-    name: str = "",
-) -> None:
-    """Save model and optimizer state to disk."""
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    filename = name or f"ckpt_{global_step}.pt"
-    path = os.path.join(checkpoint_dir, filename)
-    torch.save(
-        {
-            "global_step": global_step,
-            "policy": policy.state_dict(),
-            "optimizer": optimizer.state_dict(),
-        },
-        path,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +233,7 @@ def _train_loop(
     envs,
     policy: DQNetwork,
     target_policy: DQNetwork,
+    loss_fn: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     buffer: dict[str, torch.Tensor],
     device: torch.device,
@@ -249,6 +270,7 @@ def _train_loop(
     # Accumulate detached loss tensors between log events; sync once per interval.
     step_losses: list[torch.Tensor] = []
     avg_loss = 0.0
+    best_mean_reward = float("-inf")
 
     obs, _ = envs.reset(seed=int(cfg.seed))
     start = perf_counter()
@@ -292,12 +314,10 @@ def _train_loop(
         buf_idx = (buf_idx + num_envs) % tcfg.buffer_size
         buf_filled = min(buf_filled + num_envs, tcfg.buffer_size)
         obs = next_obs
+        prev_step = global_step
         global_step += num_envs
-        prev_step = global_step - num_envs
 
         # -- gradient updates --------------------------------------------------
-        # Maintain the paper's 1 update per 4 frames. With num_envs parallel
-        # workers each env step covers num_envs frames, so we scale accordingly.
         if num_envs >= tcfg.train_every:
             n_updates = num_envs // tcfg.train_every
         else:
@@ -313,6 +333,7 @@ def _train_loop(
                         policy,
                         target_policy,
                         optimizer,
+                        loss_fn,
                         buf_filled,
                         buf_idx,
                         num_envs,
@@ -322,20 +343,20 @@ def _train_loop(
                     )
                 )
 
-        # -- hard target update ------------------------------------------------
+        # -- target update ------------------------------------------------
         if (
             global_step // tcfg.target_update_frames
             != prev_step // tcfg.target_update_frames
         ):
             target_policy.load_state_dict(policy.state_dict())
 
-        # -- periodic evaluation & recording ---------------------------------
+        # -- periodic evaluation & conditional best-save --------------------
         eval_info: str | None = None
         if (
             global_step // tcfg.eval_interval_frames
             != prev_step // tcfg.eval_interval_frames
         ):
-            mean_r, std_r, max_r, vid_path = _evaluate_and_record(
+            mean_r, std_r, max_r, video_path = _evaluate_and_record(
                 policy,
                 global_step,
                 ecfg,
@@ -343,11 +364,11 @@ def _train_loop(
                 cfg.paths.video_dir,
                 device,
                 writer,
-                tcfg.eval_episodes,
+                n_episodes=tcfg.eval_episodes,
+                record=False,
             )
-            eval_info = (
-                f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f}) | New video saved!"
-            )
+            if video_path:
+                eval_info = f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f})"
 
         # -- tensorboard logging -----------------------------------------------
         if (
@@ -378,11 +399,6 @@ def _train_loop(
             if eval_info:
                 msg += f"  # {eval_info}"
             log.info(msg)
-
-        # -- checkpoint --------------------------------------------------------
-        if global_step // tcfg.checkpoint_frames != prev_step // tcfg.checkpoint_frames:
-            _save_checkpoint(policy, optimizer, global_step, cfg.paths.checkpoint_dir)
-            log.info("Checkpoint saved at frame %d", global_step)
 
     # -- always save the final checkpoint --------------------------------------
     _save_checkpoint(
@@ -420,6 +436,7 @@ def train_dqn(cfg: DictConfig) -> None:
     target_policy = instantiate(cfg.model, num_branches=num_branches).to(device)
     target_policy.load_state_dict(policy.state_dict())
 
+    loss_fn = get_loss_fn(cfg.train.loss_fn)
     optimizer = torch.optim.AdamW(policy.parameters(), lr=cfg.train.lr)
 
     # -- CPU replay buffer (uint8 to save RAM) ---------------------------------
@@ -447,7 +464,7 @@ def train_dqn(cfg: DictConfig) -> None:
     )
 
     elapsed, avg_fps = _train_loop(
-        cfg, envs, policy, target_policy, optimizer, buffer, device, writer
+        cfg, envs, policy, target_policy, loss_fn, optimizer, buffer, device, writer
     )
     writer.close()
     log.info("Done -- %.1fs | avg FPS %.0f", elapsed, avg_fps)

@@ -1,5 +1,8 @@
 device: auto   # auto | cpu | cuda
 
+# loss
+loss_fn: mse  # mse | huber
+
 # optimiser
 lr: 3e-4
 
