@@ -1,9 +1,11 @@
+import random
+
 import hydra
+import numpy as np
 import torch
 from omegaconf import DictConfig
 
 from src.dqn.train_dqn import train_dqn
-from src.utils import prepare_run_dirs
 
 _TRAINERS = {
     "dqn": train_dqn,
@@ -13,9 +15,11 @@ _TRAINERS = {
 
 @hydra.main(version_base="1.3", config_path="../config", config_name="config")
 def main(cfg: DictConfig) -> None:
-    """Entry point: seed, prepare dirs, and dispatch to the right trainer."""
-    torch.manual_seed(int(cfg.seed))
-    prepare_run_dirs(cfg)
+    """Entry point: seed all RNGs and dispatch to the right trainer."""
+    seed = int(cfg.seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
 
     model_name: str = cfg.model.name
     trainer = _TRAINERS.get(model_name)

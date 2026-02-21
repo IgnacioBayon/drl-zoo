@@ -1,5 +1,3 @@
-from typing import Dict
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,7 +29,7 @@ class DQNetwork(nn.Module):
         dummy_input = torch.zeros(1, in_channels, *in_resolution)
         with torch.no_grad():
             dummy_output = self.encoder(dummy_input)
-        conv_out_size = dummy_output.view(1, -1).shape[1]
+        conv_out_size = dummy_output.numel()
         self.fc = nn.Sequential(nn.Linear(conv_out_size, 512), nn.ReLU())
 
         # Branching output: one massive linear layer, reshaped later
@@ -240,7 +238,7 @@ class RainbowDQN(nn.Module):
             torch.linspace(vmin, vmax, atoms),
         )
 
-    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         z = self.encoder(x)
         logits = self.head(z)  # (B, A, atoms)
         probs = F.softmax(logits, dim=-1)  # (B, A, atoms)

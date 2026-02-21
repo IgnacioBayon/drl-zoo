@@ -50,17 +50,17 @@ class GrayScalePixelObs(gym.ObservationWrapper):
 
     # BT.601 luminance coefficients
     _LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    # Equal-weight mean — same dot-product path as luminance for speed.
+    _MEAN_WEIGHTS = np.array([1 / 3, 1 / 3, 1 / 3], dtype=np.float32)
 
     def __init__(self, env: gym.Env, use_luminance: bool) -> None:
         super().__init__(env)
         h, w = env.observation_space.shape[:2]
         self.observation_space = gym.spaces.Box(0, 255, (h, w), dtype=np.uint8)
-        self._luminance = use_luminance
+        self._weights = self._LUMA_WEIGHTS if use_luminance else self._MEAN_WEIGHTS
 
     def observation(self, obs):
-        if self._luminance:
-            return (obs @ self._LUMA_WEIGHTS).astype(np.uint8)
-        return np.mean(obs, axis=-1).astype(np.uint8)
+        return (obs @ self._weights).astype(np.uint8)
 
 
 def build_envs(
@@ -88,7 +88,7 @@ def build_envs(
     all_env_kwargs = {
         "id": env_name,
         "num_envs": num_envs,
-        "vectorization_mode": "async",
+        "vectorization_mode": "sync",
         "render_mode": render_mode,
         "width": resolution[0],
         "height": resolution[1],
@@ -117,7 +117,7 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
         if mode == "train"
         else tuple(env_cfg.full_resolution)
     )
-    return build_envs(
+    kwargs: dict = dict(
         env_name=env_cfg.name,
         num_envs=env_cfg.num_envs,
         # observation space
@@ -139,8 +139,10 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
         reset_noise_scale=env_cfg.reset_noise_scale,
         # vectorised envs
         vectorized=mode == "train",
-        xml_file=env_cfg.xml_file,
     )
+    if env_cfg.xml_file is not None:
+        kwargs["xml_file"] = env_cfg.xml_file
+    return build_envs(**kwargs)
 
 
 if __name__ == "__main__":

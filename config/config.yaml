@@ -16,3 +16,8 @@ hydra:
   run:
     # dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
     dir: outputs/run_${now:%Y%m%d_%H%M%S}_${env.name}_${model.name}
+    
+  job_logging:
+    formatters:
+      simple:
+        format: '[%(levelname)s] - %(message)s' # Removes timestamps and module names

@@ -34,8 +34,15 @@ def _run_eval_episode(
     train_resolution: tuple[int, int],
     device: torch.device,
     record: bool = False,
-) -> tuple[float, list[np.ndarray]]:
-    """Run one greedy episode. Optionally capture render frames."""
+) -> tuple[float, float, float, list[np.ndarray]]:
+    """Run one greedy episode. Optionally capture render frames.
+
+    Returns:
+        total_reward: Cumulative episode reward.
+        final_torso_x: Final x position of the torso joint (``qpos[0]``).
+        final_com_x: Final x coordinate of the torso centre of mass.
+        frames: Rendered RGB frames (empty when ``record=False``).
+    """
     env = build_from_config(env_cfg, mode="eval")
     obs, _ = env.reset()
     frames: list[np.ndarray] = []
@@ -46,12 +53,7 @@ def _run_eval_episode(
         while not done:
             if record:
                 frames.append(env.unwrapped.render())
-            state_t = (
-                torch.from_numpy(np.array(obs))
-                .unsqueeze(0)
-                .to(device, dtype=torch.float32)
-                / 255.0
-            )
+            state_t = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0) / 255.0
             state_t = F.interpolate(
                 state_t, size=train_resolution, mode="bilinear", align_corners=False
             )
@@ -60,8 +62,15 @@ def _run_eval_episode(
             total_reward += float(reward)
             done = terminated or truncated
 
+    # Read final positional state from the MuJoCo simulation.
+    mj_data = env.unwrapped.data
+    mj_model = env.unwrapped.model
+    torso_id: int = mj_model.body("torso").id
+    final_torso_x = float(mj_data.qpos[0])
+    final_com_x = float(mj_data.subtree_com[torso_id][0])
+
     env.close()
-    return total_reward, frames
+    return total_reward, final_torso_x, final_com_x, frames
 
 
 def _evaluate_and_record(
@@ -83,8 +92,10 @@ def _evaluate_and_record(
 
     # First pass: score all episodes (no rendering)
     returns = np.empty(n_episodes, dtype=np.float64)
+    final_torso_xs = np.empty(n_episodes, dtype=np.float64)
+    final_com_xs = np.empty(n_episodes, dtype=np.float64)
     for i in range(n_episodes):
-        returns[i], _ = _run_eval_episode(
+        returns[i], final_torso_xs[i], final_com_xs[i], _ = _run_eval_episode(
             policy, env_cfg, train_resolution, device, record=False
         )
 
@@ -95,19 +106,29 @@ def _evaluate_and_record(
     )
 
     # Second pass: re-run one episode with recording to save the best video
-    _, frames = _run_eval_episode(
+    _, _, _, frames = _run_eval_episode(
         policy, env_cfg, train_resolution, device, record=True
     )
 
     policy.train()
 
+    # Save recording .mp4
     os.makedirs(video_dir, exist_ok=True)
     filename = os.path.join(video_dir, f"eval_step_{step}.mp4")
     imageio.mimsave(filename, frames, fps=30)
 
+    # Tensorboard logs
     writer.add_scalar("eval/mean_reward", mean_r, step)
     writer.add_scalar("eval/std_reward", std_r, step)
     writer.add_scalar("eval/max_reward", max_r, step)
+    writer.add_scalars(
+        "eval/final_x_position",
+        {
+            "torso": float(final_torso_xs.mean()),
+            "com": float(final_com_xs.mean()),
+        },
+        step,
+    )
 
     return mean_r, std_r, max_r, filename
 
@@ -118,15 +139,28 @@ def _train_step(
     target_policy: DQNetwork,
     optimizer: torch.optim.Optimizer,
     buf_filled: int,
+    buf_idx: int,
+    num_envs: int,
     batch_size: int,
     gamma: float,
     device: torch.device,
-) -> float:
-    """Sample a mini-batch from the replay buffer and perform one gradient step."""
-    indices = torch.randint(0, buf_filled, (batch_size,))
+) -> torch.Tensor:
+    """Sample a mini-batch from the replay buffer and perform one gradient step.
+
+    Returns:
+        loss: Detached scalar loss tensor (no GPU sync — caller decides when to read).
+    """
+    buf_size = buffer["obs"].shape[0]
+    # Exclude the last `num_envs` slots: their next observation hasn't been written yet.
+    valid = buf_filled - num_envs
+    raw = torch.randint(0, valid, (batch_size,))
+    # When the buffer hasn't wrapped, indices are sequential from 0.
+    # When full, rotate past the invalid write-head region.
+    indices = raw if buf_filled < buf_size else (raw + buf_idx) % buf_size
+    next_indices = (indices + num_envs) % buf_size
 
     states = buffer["obs"][indices].to(device, dtype=torch.float32) / 255.0
-    next_states = buffer["next_obs"][indices].to(device, dtype=torch.float32) / 255.0
+    next_states = buffer["obs"][next_indices].to(device, dtype=torch.float32) / 255.0
     actions = buffer["actions"][indices].to(device, dtype=torch.long)
     rewards = buffer["rewards"][indices].to(device, dtype=torch.float32)
     dones = buffer["dones"][indices].to(device, dtype=torch.float32)
@@ -144,7 +178,8 @@ def _train_step(
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-    return loss.item()
+    # Return detached scalar — avoids a GPU sync on every training step.
+    return loss.detach()
 
 
 def _save_checkpoint(
@@ -210,10 +245,12 @@ def _train_loop(
     # -- per-worker reward tracking --------------------------------------------
     worker_returns = np.zeros(num_envs, dtype=np.float64)
     episode_returns: deque[float] = deque(maxlen=100)
-    recent_losses: deque[float] = deque(maxlen=100)
+    reward_window_sum = 0.0
+    # Accumulate detached loss tensors between log events; sync once per interval.
+    step_losses: list[torch.Tensor] = []
     avg_loss = 0.0
 
-    obs, _ = envs.reset()
+    obs, _ = envs.reset(seed=int(cfg.seed))
     start = perf_counter()
 
     for step in range(1, steps + 1):
@@ -229,7 +266,7 @@ def _train_loop(
             actions = envs.action_space.sample()
         else:
             with torch.no_grad():
-                obs_t = torch.from_numpy(obs).to(device, dtype=torch.float32) / 255.0
+                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
                 actions = policy(obs_t).argmax(dim=2).cpu().numpy()
 
         next_obs, rewards, terminations, truncations, _ = envs.step(actions)
@@ -238,60 +275,66 @@ def _train_loop(
         # -- per-worker return accumulation ------------------------------------
         worker_returns += rewards.astype(np.float64)
         for i in np.where(dones)[0]:
-            episode_returns.append(worker_returns[i])
+            if len(episode_returns) == episode_returns.maxlen:
+                reward_window_sum -= episode_returns[0]
+            ret = float(worker_returns[i])
+            reward_window_sum += ret
+            episode_returns.append(ret)
             worker_returns[i] = 0.0
 
         # -- store transition --------------------------------------------------
-        end_idx = buf_idx + num_envs
-        indices = np.arange(buf_idx, end_idx) % tcfg.buffer_size
-        buffer["obs"][indices] = torch.from_numpy(np.array(obs))
-        buffer["next_obs"][indices] = torch.from_numpy(np.array(next_obs))
-        buffer["actions"][indices] = torch.from_numpy(actions.astype(np.uint8))
-        buffer["rewards"][indices] = torch.from_numpy(rewards.astype(np.float32))
-        buffer["dones"][indices] = torch.from_numpy(dones.astype(np.uint8))
+        indices = np.arange(buf_idx, buf_idx + num_envs) % tcfg.buffer_size
+        buffer["obs"][indices] = torch.as_tensor(obs)
+        buffer["actions"][indices] = torch.as_tensor(actions, dtype=torch.uint8)
+        buffer["rewards"][indices] = torch.as_tensor(rewards, dtype=torch.float32)
+        buffer["dones"][indices] = torch.as_tensor(dones, dtype=torch.uint8)
 
-        buf_idx = end_idx % tcfg.buffer_size
+        buf_idx = (buf_idx + num_envs) % tcfg.buffer_size
         buf_filled = min(buf_filled + num_envs, tcfg.buffer_size)
         obs = next_obs
         global_step += num_envs
+        prev_step = global_step - num_envs
 
         # -- gradient updates --------------------------------------------------
-        if buf_filled >= tcfg.batch_size:
-            if num_envs >= tcfg.train_every:
-                for _ in range(num_envs // tcfg.train_every):
-                    loss = _train_step(
+        # Maintain the paper's 1 update per 4 frames. With num_envs parallel
+        # workers each env step covers num_envs frames, so we scale accordingly.
+        if num_envs >= tcfg.train_every:
+            n_updates = num_envs // tcfg.train_every
+        else:
+            n_updates = int(
+                global_step // tcfg.train_every != prev_step // tcfg.train_every
+            )
+
+        if buf_filled >= tcfg.batch_size + num_envs and n_updates > 0:
+            for _ in range(n_updates):
+                step_losses.append(
+                    _train_step(
                         buffer,
                         policy,
                         target_policy,
                         optimizer,
                         buf_filled,
+                        buf_idx,
+                        num_envs,
                         tcfg.batch_size,
                         tcfg.gamma,
                         device,
                     )
-                    recent_losses.append(loss)
-            elif global_step % (tcfg.train_every // num_envs) < num_envs:
-                loss = _train_step(
-                    buffer,
-                    policy,
-                    target_policy,
-                    optimizer,
-                    buf_filled,
-                    tcfg.batch_size,
-                    tcfg.gamma,
-                    device,
                 )
-                recent_losses.append(loss)
-            if recent_losses:
-                avg_loss = sum(recent_losses) / len(recent_losses)
 
         # -- hard target update ------------------------------------------------
-        if global_step % tcfg.target_update_frames < num_envs:
+        if (
+            global_step // tcfg.target_update_frames
+            != prev_step // tcfg.target_update_frames
+        ):
             target_policy.load_state_dict(policy.state_dict())
 
         # -- periodic evaluation & recording ---------------------------------
         eval_info: str | None = None
-        if global_step % tcfg.eval_interval_frames < num_envs:
+        if (
+            global_step // tcfg.eval_interval_frames
+            != prev_step // tcfg.eval_interval_frames
+        ):
             mean_r, std_r, max_r, vid_path = _evaluate_and_record(
                 policy,
                 global_step,
@@ -303,11 +346,18 @@ def _train_loop(
                 tcfg.eval_episodes,
             )
             eval_info = (
-                f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f}) | video -> {vid_path}"
+                f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f}) | New video saved!"
             )
 
         # -- tensorboard logging -----------------------------------------------
-        if global_step % tcfg.log_interval_frames < num_envs:
+        if (
+            global_step // tcfg.log_interval_frames
+            != prev_step // tcfg.log_interval_frames
+        ):
+            # Sync all accumulated loss tensors in one shot instead of per-step.
+            if step_losses:
+                avg_loss = torch.stack(step_losses).mean().item()
+                step_losses.clear()
             elapsed = perf_counter() - start
             fps = global_step / elapsed
             writer.add_scalar("train/epsilon", epsilon, global_step)
@@ -316,7 +366,7 @@ def _train_loop(
             writer.add_scalar("train/buffer_filled", buf_filled, global_step)
             avg_reward = 0.0
             if episode_returns:
-                avg_reward = sum(episode_returns) / len(episode_returns)
+                avg_reward = reward_window_sum / len(episode_returns)
                 writer.add_scalar("train/avg_reward_100", avg_reward, global_step)
 
             # -- console logging -----------------------------------------------
@@ -330,7 +380,7 @@ def _train_loop(
             log.info(msg)
 
         # -- checkpoint --------------------------------------------------------
-        if global_step % tcfg.checkpoint_frames < num_envs:
+        if global_step // tcfg.checkpoint_frames != prev_step // tcfg.checkpoint_frames:
             _save_checkpoint(policy, optimizer, global_step, cfg.paths.checkpoint_dir)
             log.info("Checkpoint saved at frame %d", global_step)
 
@@ -376,9 +426,9 @@ def train_dqn(cfg: DictConfig) -> None:
     res_h, res_w = tuple(cfg.env.train_resolution)
     buf_sz = int(cfg.train.buffer_size)
     stk = cfg.env.stack_size
+    # next_obs is derived from obs[(i + num_envs) % buf_sz] — no duplicate storage.
     buffer: dict[str, torch.Tensor] = {
         "obs": torch.zeros((buf_sz, stk, res_h, res_w), dtype=torch.uint8),
-        "next_obs": torch.zeros((buf_sz, stk, res_h, res_w), dtype=torch.uint8),
         "actions": torch.zeros((buf_sz, num_branches), dtype=torch.uint8),
         "rewards": torch.zeros((buf_sz,), dtype=torch.float32),
         "dones": torch.zeros((buf_sz,), dtype=torch.uint8),
