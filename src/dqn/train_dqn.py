@@ -174,7 +174,7 @@ def _train_step(
         max_target_q = target_policy(next_states).max(dim=2).values  # (B, Branches)
         targets = rewards.unsqueeze(1) + gamma * max_target_q * (1 - dones.unsqueeze(1))
 
-    loss = F.smooth_l1_loss(q_taken, targets)
+    loss = F.mse_loss(q_taken, targets)
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
