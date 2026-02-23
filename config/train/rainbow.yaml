@@ -1,0 +1,25 @@
+defaults:
+  - base
+  - _self_
+
+# --- Rainbow-specific overrides ---
+
+# Adam optimiser (Rainbow paper uses 6.25e-5 with eps=1.5e-4)
+lr: 6.25e-5
+
+# Multi-step returns
+n_step: 3
+
+# Prioritized Experience Replay
+per_alpha: 0.6         # prioritisation exponent (0 = uniform)
+per_beta_start: 0.4    # initial IS-weight correction
+per_beta_frames: 100_000  # anneal β → 1.0 over this many frames
+
+# Rainbow uses NoisyNets instead of ε-greedy, but we keep these
+# in the config to avoid missing-key errors from the base schema.
+epsilon_start: 0.0
+epsilon_end: 0.0
+epsilon_anneal_frames: 1
+
+# Target network update (Rainbow paper: every 8000 gradient steps ≈ 32000 frames)
+target_update_frames: 32_000

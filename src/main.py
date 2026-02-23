@@ -6,10 +6,11 @@ import torch
 from omegaconf import DictConfig
 
 from src.dqn.train_dqn import train_dqn
+from src.dqn.train_rainbow import train_rainbow
 
 _TRAINERS = {
     "dqn": train_dqn,
-    # "rainbow": train_rainbow,  # TODO: implement
+    "rainbow": train_rainbow,
 }
 
 

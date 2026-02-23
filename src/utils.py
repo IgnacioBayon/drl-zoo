@@ -1,4 +1,33 @@
+"""Shared training utilities: checkpointing, evaluation, and recording.
+
+These helpers are algorithm-agnostic — they accept a generic ``action_fn``
+callable so they work with DQN, Rainbow, and future PPO / SAC trainers.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from collections.abc import Callable
+
+import imageio
+import numpy as np
 import torch
+import torch.nn as nn
+from omegaconf import DictConfig
+from torch.utils.tensorboard import SummaryWriter
+
+from src.environment import build_from_config, build_render_env, sync_mujoco_state
+
+log = logging.getLogger(__name__)
+
+# obs tensor (1, C, H, W) on device → action numpy (branches,)
+ActionFn = Callable[[torch.Tensor], np.ndarray]
+
+
+# ---------------------------------------------------------------------------
+# Device / loss helpers
+# ---------------------------------------------------------------------------
 
 
 def get_device(device_cfg: str) -> torch.device:
@@ -8,13 +37,148 @@ def get_device(device_cfg: str) -> torch.device:
     return torch.device(device_cfg)
 
 
-def get_loss_fn(loss_fn_cfg: str):
+def get_loss_fn(loss_fn_cfg: str) -> nn.Module:
     """Return the appropriate loss function based on a config string."""
     if loss_fn_cfg == "mse":
-        return torch.nn.MSELoss()
+        return nn.MSELoss()
     elif loss_fn_cfg == "huber":
-        return torch.nn.SmoothL1Loss()
-    else:
-        raise ValueError(
-            f"Unknown loss function '{loss_fn_cfg}'. Choose from: mse, huber"
+        return nn.SmoothL1Loss()
+    raise ValueError(f"Unknown loss function '{loss_fn_cfg}'. Choose from: mse, huber")
+
+
+# ---------------------------------------------------------------------------
+# Checkpointing
+# ---------------------------------------------------------------------------
+
+
+def save_checkpoint(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    global_step: int,
+    checkpoint_dir: str,
+    name: str = "",
+) -> None:
+    """Save model and optimizer state to disk."""
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    filename = name or f"ckpt_{global_step}.pt"
+    torch.save(
+        {
+            "global_step": global_step,
+            "policy": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+        },
+        os.path.join(checkpoint_dir, filename),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+
+
+def run_eval_episode(
+    action_fn: ActionFn,
+    env_cfg: DictConfig,
+    device: torch.device,
+    record: bool = False,
+    seed: int | None = None,
+) -> tuple[float, float, float, list[np.ndarray]]:
+    """Run one greedy episode at *train* resolution.
+
+    When *record* is ``True`` a separate full-resolution MuJoCo env is
+    created and the physics state is synced every step to capture 480×480
+    frames without affecting the agent's 84×84 observations.
+
+    Returns:
+        total_reward, final_torso_x, final_com_x, frames.
+    """
+    env = build_from_config(env_cfg, mode="eval")
+    render_env = build_render_env(env_cfg) if record else None
+
+    obs, _ = env.reset(seed=seed)
+    frames: list[np.ndarray] = []
+    total_reward = 0.0
+    done = False
+
+    with torch.no_grad():
+        while not done:
+            if render_env is not None:
+                sync_mujoco_state(env, render_env)
+                frames.append(render_env.render())
+
+            state_t = (
+                torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                / 255.0
+            )
+            action = action_fn(state_t)
+            obs, reward, terminated, truncated, _ = env.step(action)
+            total_reward += float(reward)
+            done = terminated or truncated
+
+    mj_data = env.unwrapped.data
+    mj_model = env.unwrapped.model
+    torso_id: int = mj_model.body("torso").id
+    final_torso_x = float(mj_data.qpos[0])
+    final_com_x = float(mj_data.subtree_com[torso_id][0])
+
+    env.close()
+    if render_env is not None:
+        render_env.close()
+    return total_reward, final_torso_x, final_com_x, frames
+
+
+def evaluate_and_record(
+    policy: nn.Module,
+    action_fn: ActionFn,
+    step: int,
+    env_cfg: DictConfig,
+    video_dir: str,
+    device: torch.device,
+    writer: SummaryWriter,
+    n_episodes: int,
+    best_mean_reward: float = float("-inf"),
+) -> tuple[float, float, float, str]:
+    """Run *n_episodes* greedy evaluations; conditionally record a video.
+
+    Toggles the *policy* to eval mode (disabling NoisyNets / dropout) and
+    restores train mode before returning.
+
+    Returns:
+        mean, std, max of episode rewards and the path to the saved video
+        (empty string when no improvement).
+    """
+    policy.eval()
+
+    returns = np.empty(n_episodes, dtype=np.float64)
+    final_torso_xs = np.empty(n_episodes, dtype=np.float64)
+    final_com_xs = np.empty(n_episodes, dtype=np.float64)
+    for i in range(n_episodes):
+        returns[i], final_torso_xs[i], final_com_xs[i], _ = run_eval_episode(
+            action_fn, env_cfg, device, record=False, seed=int(step) + i
         )
+
+    mean_r, std_r = float(returns.mean()), float(returns.std())
+    best_idx = int(returns.argmax())
+    max_r = float(returns[best_idx])
+
+    filename = ""
+    if mean_r > best_mean_reward:
+        reward, _, _, frames = run_eval_episode(
+            action_fn, env_cfg, device, record=True, seed=int(step) + best_idx
+        )
+        assert reward - max_r < 1e-2, "Re-evaluation reward should match the first pass"
+        os.makedirs(video_dir, exist_ok=True)
+        filename = os.path.join(video_dir, f"eval_step_{step}_reward_{reward:.2f}.mp4")
+        imageio.mimsave(filename, frames, fps=30)
+
+    policy.train()
+
+    writer.add_scalar("eval/mean_reward", mean_r, step)
+    writer.add_scalar("eval/std_reward", std_r, step)
+    writer.add_scalar("eval/max_reward", max_r, step)
+    writer.add_scalars(
+        "eval/final_x_position",
+        {"torso": float(final_torso_xs.mean()), "com": float(final_com_xs.mean())},
+        step,
+    )
+    return mean_r, std_r, max_r, filename

@@ -1,23 +1,31 @@
+"""Model architectures for DQN and Rainbow DQN with shared encoder."""
+
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from omegaconf import DictConfig
+
+# ---------------------------------------------------------------------------
+# Shared encoder — identical architecture for both DQN and Rainbow
+# ---------------------------------------------------------------------------
 
 
-class DQNetwork(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        in_resolution: tuple[int],
-        action_bins: int,
-        num_branches: int,
-        **kwargs,
-    ):
+class Encoder(nn.Module):
+    """CNN encoder shared between DQN and Rainbow for fair comparison.
+
+    Architecture: 3-layer CNN (Nature DQN) → flatten → FC 512.
+
+    Args:
+        in_channels: Number of input channels (typically ``stack_size``).
+        in_resolution: Spatial resolution ``(H, W)`` of each frame.
+    """
+
+    OUT_FEATURES: int = 512
+
+    def __init__(self, in_channels: int, in_resolution: tuple[int, ...]) -> None:
         super().__init__()
-        self.num_branches = num_branches
-        self.action_bins = action_bins
-
-        self.encoder = nn.Sequential(
+        self.conv = nn.Sequential(
             nn.Conv2d(in_channels, 32, 8, stride=4),
             nn.ReLU(),
             nn.Conv2d(32, 64, 4, stride=2),
@@ -26,223 +34,196 @@ class DQNetwork(nn.Module):
             nn.ReLU(),
             nn.Flatten(),
         )
-        dummy_input = torch.zeros(1, in_channels, *in_resolution)
         with torch.no_grad():
-            dummy_output = self.encoder(dummy_input)
-        conv_out_size = dummy_output.numel()
-        self.fc = nn.Sequential(nn.Linear(conv_out_size, 512), nn.ReLU())
-
-        # Branching output: one massive linear layer, reshaped later
-        self.branches = nn.Linear(512, num_branches * action_bins)
-
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.fc(x)
-        logits = self.branches(x)
-        return logits.view(-1, self.num_branches, self.action_bins)
-
-
-def stack_to_channels(x: torch.Tensor) -> torch.Tensor:
-    """
-    Input:  (B, S, H, W, C)  (your current format)
-    Output: (B, S*C, H, W)   (Torch Conv2d expects NCHW)
-    """
-    if x.ndim != 5:
-        raise ValueError(f"Expected 5D (B,S,H,W,C), got shape {tuple(x.shape)}")
-
-    b, s, h, w, c = x.shape
-    # (B, S, H, W, C) -> (B, H, W, S, C) -> (B, H, W, S*C) -> (B, S*C, H, W)
-    x = x.permute(0, 2, 3, 1, 4).contiguous().view(b, h, w, s * c)
-    x = x.permute(0, 3, 1, 2).contiguous()
-    # .contiguous() is often needed after permute before view/reshape
-    # to ensure memory layout is correct for the new shape.
-    return x
-
-
-class EncoderDQN(nn.Module):
-    """Torch-native encoder for DQN: conv stack + flatten + MLP stack."""
-
-    def __init__(self, cfg: DictConfig):
-        super().__init__()
-
-        # ---- Conv stack ----
-        in_ch = int(cfg.encoder.input_channels) * int(cfg.encoder.frame_stack)
-        conv_layers = []
-        for layer in cfg.encoder.conv:
-            conv_layers.append(
-                nn.Conv2d(
-                    in_channels=in_ch,
-                    out_channels=int(layer.out_channels),
-                    kernel_size=int(layer.kernel_size),
-                    stride=int(layer.stride),
-                    padding=int(layer.padding),
-                )
-            )
-            conv_layers.append(nn.ReLU())
-            in_ch = int(layer.out_channels)
-
-        self.conv = nn.Sequential(*conv_layers)
-
-        # --- infer flatten dim --- E.g. not having to calculate 32 * 9 * 9
-        with torch.no_grad():
-            h = int(cfg.encoder.input_height)
-            w = int(cfg.encoder.input_width)
-            in_ch = int(cfg.encoder.input_channels) * int(cfg.encoder.frame_stack)
-
-            dummy_input = torch.zeros(1, in_ch, h, w)
-            conv_out = self.conv(dummy_input)
-            flat_dim = conv_out.view(1, -1).shape[1]
-
-        # ---- MLP stack ----
-        mlp_layers = []
-        prev = flat_dim
-        for layer in cfg.encoder.mlp:
-            out = int(layer.out_features)
-            mlp_layers.append(nn.Linear(prev, out))
-            mlp_layers.append(nn.ReLU())
-            prev = out
-            last_out = out
-
-        self.mlp = nn.Sequential(*mlp_layers)
-        self.latent_dim = int(last_out)
+            conv_out = self.conv(torch.zeros(1, in_channels, *in_resolution)).shape[1]
+        self.fc = nn.Sequential(nn.Linear(conv_out, self.OUT_FEATURES), nn.ReLU())
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = stack_to_channels(x)
-        x = self.conv(x)
-        x = torch.flatten(x, start_dim=1)  # flatten all but batch dimension
-        x = self.mlp(x)
-        return x
+        return self.fc(self.conv(x))
 
 
-# --- DQN ---
+# ---------------------------------------------------------------------------
+# DQN — branching Q-network
+# ---------------------------------------------------------------------------
 
 
-class DQN(nn.Module):
-    """DQN implementation with a shared encoder and a simple linear head for Q-values."""
+class DQNetwork(nn.Module):
+    """Branching DQN: shared encoder → one linear head per action branch.
 
-    def __init__(self, cfg: DictConfig, num_actions: int):
+    Args:
+        in_channels: Number of stacked frames.
+        in_resolution: ``(H, W)`` spatial resolution.
+        action_bins: Discrete bins per action dimension.
+        num_branches: Number of independent action dimensions.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        in_resolution: tuple[int, ...],
+        action_bins: int,
+        num_branches: int,
+        **kwargs: object,
+    ) -> None:
         super().__init__()
-
-        self.encoder = EncoderDQN(cfg=cfg)
-        self.head = nn.Linear(self.encoder.latent_dim, num_actions)
+        self.num_branches = num_branches
+        self.action_bins = action_bins
+        self.encoder = Encoder(in_channels, in_resolution)
+        self.branches = nn.Linear(Encoder.OUT_FEATURES, num_branches * action_bins)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Returns Q-values of shape ``(B, branches, bins)``."""
         z = self.encoder(x)
-        return self.head(z)
+        return self.branches(z).view(-1, self.num_branches, self.action_bins)
 
 
-# --- RAINBOW DQN ---
+# ---------------------------------------------------------------------------
+# Rainbow DQN components
+# ---------------------------------------------------------------------------
 
 
 class NoisyLinear(nn.Module):
-    """Torch-native NoisyLinear layer as described in "Noisy Networks for Exploration" (Fortunato et al., 2017)."""
+    """Factorised NoisyNet linear layer (Fortunato et al., 2017).
 
-    def __init__(self, in_features: int, out_features: int, sigma0: float):
+    Samples independent Gaussian noise per forward call during training;
+    uses mean weights at eval time.
+
+    Args:
+        in_features: Input dimensionality.
+        out_features: Output dimensionality.
+        sigma0: Initial noise standard deviation scaling factor.
+    """
+
+    def __init__(
+        self, in_features: int, out_features: int, sigma0: float = 0.5
+    ) -> None:
         super().__init__()
-
-        # Learnable parameters for mean and sigma of weights and biases
+        bound = 1.0 / (in_features**0.5)
         self.weight_mu = nn.Parameter(
-            torch.empty(out_features, in_features).uniform_(-0.1, 0.1),
+            torch.empty(out_features, in_features).uniform_(-bound, bound)
         )
-        self.bias_mu = nn.Parameter(
-            torch.empty(out_features).uniform_(-0.1, 0.1),
-        )
+        self.bias_mu = nn.Parameter(torch.empty(out_features).uniform_(-bound, bound))
 
         init_sigma = sigma0 / (in_features**0.5)
         self.weight_sigma = nn.Parameter(
-            torch.full((out_features, in_features), init_sigma),
+            torch.full((out_features, in_features), init_sigma)
         )
-        self.bias_sigma = nn.Parameter(
-            torch.full((out_features,), init_sigma),
-        )
+        self.bias_sigma = nn.Parameter(torch.full((out_features,), init_sigma))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
             w = self.weight_mu + self.weight_sigma * torch.randn_like(self.weight_sigma)
             b = self.bias_mu + self.bias_sigma * torch.randn_like(self.bias_sigma)
         else:
-            w = self.weight_mu
-            b = self.bias_mu
+            w, b = self.weight_mu, self.bias_mu
         return F.linear(x, w, b)
 
 
 class DuelingHead(nn.Module):
-    """
-    Dueling DQN head that outputs (B, A, atoms) logits for the distributional version.
-    Implemented as described in "Dueling Network Architectures for Deep Reinforcement Learning" (Wang et al., 2016).
+    """Dueling distributional head for a single action branch (Wang et al., 2016).
+
+    Outputs ``(B, action_bins, atoms)`` logits used for C51 distributional RL.
+
+    Args:
+        latent_dim: Encoder output dimensionality.
+        action_bins: Number of discrete actions in this branch.
+        atoms: Number of atoms for the categorical distribution.
+        hidden_dim: Hidden layer width inside each stream.
+        sigma0: NoisyLinear initial sigma.
     """
 
     def __init__(
         self,
         latent_dim: int,
-        num_actions: int,
+        action_bins: int,
         atoms: int,
         hidden_dim: int,
         sigma0: float,
-    ):
+    ) -> None:
         super().__init__()
-
-        self.num_actions = num_actions
+        self.action_bins = action_bins
         self.atoms = atoms
 
-        # Value stream: (B, atoms)
+        # Value stream → (B, atoms)
         self.v1 = NoisyLinear(latent_dim, hidden_dim, sigma0)
         self.v2 = NoisyLinear(hidden_dim, atoms, sigma0)
 
-        # Advantage stream: (B, A*atoms) -> reshape to (B, A, atoms)
+        # Advantage stream → (B, action_bins * atoms)
         self.a1 = NoisyLinear(latent_dim, hidden_dim, sigma0)
-        self.a2 = NoisyLinear(hidden_dim, num_actions * atoms, sigma0)
+        self.a2 = NoisyLinear(hidden_dim, action_bins * atoms, sigma0)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
-        v = F.relu(self.v1(z))
-        v = self.v2(v)  # (B, atoms)
+        """Returns ``(B, action_bins, atoms)`` logits."""
+        v = self.v2(F.relu(self.v1(z)))  # (B, atoms)
+        a = self.a2(F.relu(self.a1(z))).view(z.size(0), self.action_bins, self.atoms)
+        return v.unsqueeze(1) + a - a.mean(dim=1, keepdim=True)  # (B, bins, atoms)
 
-        a = F.relu(self.a1(z))
-        a = self.a2(a)  # (B, A*atoms)
-        a = a.view(z.size(0), self.num_actions, self.atoms)  # (B, A, atoms)
 
-        v = v.unsqueeze(1)  # (B, 1, atoms)
-        logits = v + (a - a.mean(dim=1, keepdim=True))  # dueling combine
-        return logits  # (B, A, atoms)
+# ---------------------------------------------------------------------------
+# Rainbow DQN — full model
+# ---------------------------------------------------------------------------
 
 
 class RainbowDQN(nn.Module):
-    """
-    Rainbow DQN implementation that combines all the model improvements: dueling architecture and noisy nets.
-    Implemented as described in "Rainbow: Combining Improvements in Deep Reinforcement Learning" (Hessel et al., 2017).
+    """Rainbow DQN with branching for discretised continuous control (Hessel et al., 2017).
+
+    Combines: Dueling architecture, NoisyNets, and C51 distributional output.
+    Uses the same :class:`Encoder` as :class:`DQNetwork` for fair comparison.
+
+    Args:
+        in_channels: Number of stacked frames.
+        in_resolution: ``(H, W)`` spatial resolution.
+        action_bins: Discrete bins per action dimension.
+        num_branches: Number of independent action dimensions.
+        atoms: C51 number of atoms.
+        vmin: Minimum return support value.
+        vmax: Maximum return support value.
+        noisy_sigma0: NoisyLinear initial sigma.
+        head_hidden_dim: Hidden layer width in dueling streams.
     """
 
-    def __init__(self, cfg: DictConfig, num_actions: int):
+    def __init__(
+        self,
+        in_channels: int,
+        in_resolution: tuple[int, ...],
+        action_bins: int,
+        num_branches: int,
+        atoms: int = 51,
+        vmin: float = -10.0,
+        vmax: float = 10.0,
+        noisy_sigma0: float = 0.5,
+        head_hidden_dim: int = 256,
+        **kwargs: object,
+    ) -> None:
         super().__init__()
+        self.num_branches = num_branches
+        self.action_bins = action_bins
+        self.atoms = atoms
 
-        self.encoder = EncoderDQN(cfg=cfg)
+        self.encoder = Encoder(in_channels, in_resolution)
 
-        atoms = int(cfg.rainbow.atoms)
-        vmin = float(cfg.rainbow.vmin)
-        vmax = float(cfg.rainbow.vmax)
-
-        sigma0 = float(cfg.rainbow.noisy_init_sigma)
-        hidden_dim = int(cfg.head.hidden_dim)
-
-        self.head = DuelingHead(
-            latent_dim=self.encoder.latent_dim,
-            num_actions=num_actions,
-            atoms=atoms,
-            hidden_dim=hidden_dim,
-            sigma0=sigma0,
+        self.heads = nn.ModuleList(
+            [
+                DuelingHead(
+                    Encoder.OUT_FEATURES,
+                    action_bins,
+                    atoms,
+                    head_hidden_dim,
+                    noisy_sigma0,
+                )
+                for _ in range(num_branches)
+            ]
         )
 
-        self.register_buffer(
-            "support",
-            torch.linspace(vmin, vmax, atoms),
-        )
+        self.register_buffer("support", torch.linspace(vmin, vmax, atoms))
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Returns dict with ``logits``, ``probs``, ``q`` — each ``(B, branches, bins, …)``."""
         z = self.encoder(x)
-        logits = self.head(z)  # (B, A, atoms)
-        probs = F.softmax(logits, dim=-1)  # (B, A, atoms)
-        # Expected Q-values: sum over atoms of (probability * support)
-        # probs has shape (B, A, atoms) and support has shape (atoms,),
-        # so we need to align dimensions for broadcasting.
-        q = torch.sum(probs * self.support.unsqueeze(0).unsqueeze(0), dim=-1)  # (B, A)
+        # Each head outputs (B, bins, atoms)
+        logits = torch.stack(
+            [h(z) for h in self.heads], dim=1
+        )  # (B, branches, bins, atoms)
+        probs = F.softmax(logits, dim=-1)
+        q = (probs * self.support).sum(dim=-1)  # (B, branches, bins)
         return {"logits": logits, "probs": probs, "q": q}

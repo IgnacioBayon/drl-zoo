@@ -1,34 +1,19 @@
+_target_: src.dqn.models.RainbowDQN
+
 name: rainbow
 
-encoder:
-  # input frames: (B, S, H, W, C) -> we convert to (B, S*C, H, W)
-  frame_stack: 4
-  input_channels: 3  # e.g. RGB
+in_channels: ${env.stack_size}
+in_resolution: ${env.train_resolution}
+action_bins: ${env.action_bins}
+num_branches: ???          # filled at runtime from env action space
 
-  input_height: 84
-  input_width: 84
+# C51 distributional support
+atoms: 51
+vmin: -10.0
+vmax: 10.0
 
-  conv:
-    - out_channels: 16
-      kernel_size: 8
-      stride: 4
-      padding: 0
-    - out_channels: 32
-      kernel_size: 4
-      stride: 2
-      padding: 0
+# NoisyNet initial sigma
+noisy_sigma0: 0.5
 
-  mlp:  # in_features will be inferred from conv output
-    - out_features: 256
-
-rainbow:
-  atoms: 51
-  vmin: -10.0
-  vmax: 10.0
-
-  dueling: true
-  # noisy: true
-  noisy_init_sigma: 0.5
-
-head:
-  hidden_dim: 256   # explicit head hidden layer size
+# Dueling head hidden layer width
+head_hidden_dim: 256

@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 from collections import deque
 from time import perf_counter
 
-import imageio
 import numpy as np
 import torch
 from hydra.utils import instantiate
@@ -16,7 +14,7 @@ from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
 
 from src.environment import build_from_config
-from src.utils import get_device, get_loss_fn
+from src.utils import evaluate_and_record, get_device, get_loss_fn, save_checkpoint
 
 from .models import DQNetwork
 
@@ -24,147 +22,8 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Training step
 # ---------------------------------------------------------------------------
-
-
-def _save_checkpoint(
-    policy: DQNetwork,
-    optimizer: torch.optim.Optimizer,
-    global_step: int,
-    checkpoint_dir: str,
-    name: str = "",
-) -> None:
-    """Save model and optimizer state to disk."""
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    filename = name or f"ckpt_{global_step}.pt"
-    path = os.path.join(checkpoint_dir, filename)
-    torch.save(
-        {
-            "global_step": global_step,
-            "policy": policy.state_dict(),
-            "optimizer": optimizer.state_dict(),
-        },
-        path,
-    )
-
-
-def _run_eval_episode(
-    policy: DQNetwork,
-    env_cfg: DictConfig,
-    device: torch.device,
-    record: bool = False,
-    seed: int | None = None,
-) -> tuple[float, float, float, list[np.ndarray]]:
-    """Run one greedy episode. Optionally capture render frames.
-
-    Returns:
-        total_reward: Cumulative episode reward.
-        final_torso_x: Final x position of the torso joint (``qpos[0]``).
-        final_com_x: Final x coordinate of the torso centre of mass.
-        frames: Rendered RGB frames (empty when ``record=False``).
-    """
-    env = build_from_config(env_cfg, mode="eval")
-    obs, _ = env.reset(seed=seed)
-    frames: list[np.ndarray] = []
-    total_reward = 0.0
-    done = False
-
-    with torch.no_grad():
-        while not done:
-            if record:
-                frames.append(env.unwrapped.render())
-            state_t = (
-                torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-                / 255.0
-            )
-            action = policy(state_t).argmax(dim=2).squeeze(0).cpu().numpy()
-            obs, reward, terminated, truncated, _ = env.step(action)
-            total_reward += float(reward)
-            done = terminated or truncated
-
-    # Read final positional state from the MuJoCo simulation.
-    mj_data = env.unwrapped.data
-    mj_model = env.unwrapped.model
-    torso_id: int = mj_model.body("torso").id
-    final_torso_x = float(mj_data.qpos[0])
-    final_com_x = float(mj_data.subtree_com[torso_id][0])
-
-    env.close()
-    return total_reward, final_torso_x, final_com_x, frames
-
-
-def _evaluate_and_record(
-    policy: DQNetwork,
-    step: int,
-    env_cfg: DictConfig,
-    video_dir: str,
-    device: torch.device,
-    writer: SummaryWriter,
-    n_episodes: int,
-    best_mean_reward: float = float("-inf"),
-) -> tuple[float, float, float, str]:
-    """Run *n_episodes* greedy evaluations, optionally record a video.
-
-    Args:
-        record: When True, run an extra greedy episode, render it and save
-            the resulting ``.mp4`` to *video_dir*.
-
-    Returns:
-        mean, std, max of episode rewards and the path to the saved video
-        (empty string when ``record=False``).
-    """
-    policy.eval()
-
-    # First pass: score all episodes (no rendering)
-    returns = np.empty(n_episodes, dtype=np.float64)
-    final_torso_xs = np.empty(n_episodes, dtype=np.float64)
-    final_com_xs = np.empty(n_episodes, dtype=np.float64)
-    for i in range(n_episodes):
-        returns[i], final_torso_xs[i], final_com_xs[i], _ = _run_eval_episode(
-            policy,
-            env_cfg,
-            device,
-            record=False,
-            seed=int(step) + i,
-        )
-
-    mean_r, std_r = float(returns.mean()), float(returns.std())
-    best_idx = int(returns.argmax())
-    max_r = float(returns[best_idx])
-
-    # Second pass: re-run one episode with recording to save the best video
-    filename = ""
-    if mean_r > best_mean_reward:
-        reward, _, _, frames = _run_eval_episode(
-            policy,
-            env_cfg,
-            device,
-            record=True,
-            seed=int(step) + best_idx,
-        )
-        assert reward - max_r < 1e-2, "Re-evaluation reward should match the first pass"
-        os.makedirs(video_dir, exist_ok=True)
-        filename = os.path.join(video_dir, f"eval_step_{step}_reward_{reward:.2f}.mp4")
-        imageio.mimsave(filename, frames, fps=30)
-
-    # restore train mode for subsequent gradient steps.
-    policy.train()
-
-    # Tensorboard logs
-    writer.add_scalar("eval/mean_reward", mean_r, step)
-    writer.add_scalar("eval/std_reward", std_r, step)
-    writer.add_scalar("eval/max_reward", max_r, step)
-    writer.add_scalars(
-        "eval/final_x_position",
-        {
-            "torso": float(final_torso_xs.mean()),
-            "com": float(final_com_xs.mean()),
-        },
-        step,
-    )
-
-    return mean_r, std_r, max_r, filename
 
 
 def _train_step(
@@ -364,8 +223,13 @@ def _train_loop(
             global_step // tcfg.eval_interval_frames
             != prev_step // tcfg.eval_interval_frames
         ):
-            mean_r, std_r, max_r, _ = _evaluate_and_record(
+
+            def action_fn(obs_t: torch.Tensor) -> np.ndarray:
+                return policy(obs_t).argmax(dim=2).squeeze(0).cpu().numpy()
+
+            mean_r, std_r, max_r, _ = evaluate_and_record(
                 policy,
+                action_fn,
                 global_step,
                 ecfg,
                 cfg.paths.video_dir,
@@ -379,7 +243,7 @@ def _train_loop(
             # Save a checkpoint whenever we achieve a new best mean reward.
             if mean_r > best_mean_reward:
                 best_mean_reward = mean_r
-                _save_checkpoint(
+                save_checkpoint(
                     policy,
                     optimizer,
                     global_step,
@@ -418,7 +282,7 @@ def _train_loop(
             log.info(msg)
 
     # -- always save the final checkpoint --------------------------------------
-    _save_checkpoint(
+    save_checkpoint(
         policy, optimizer, global_step, cfg.paths.checkpoint_dir, name="ckpt_final.pt"
     )
 
