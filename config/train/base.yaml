@@ -11,7 +11,7 @@ gamma: 0.99
 total_frames: 1_000_000
 
 # replay buffer
-buffer_size: 500_000
+buffer_size: 100_000
 batch_size: 64
 
 # exploration (linear ε-decay)
@@ -24,7 +24,7 @@ train_every: 16               # gradient step every N env frames
 target_update_frames: 1_000  # hard copy policy → target (decoupled from eval interval)
 
 # logging / recording
-eval_interval_frames: 20_000  # evaluate & record every N frames
-eval_episodes: 10             # number of greedy episodes per evaluation
+eval_interval_frames: 5_000  # evaluate & record every N frames
+eval_episodes: 20             # number of greedy episodes per evaluation
 checkpoint_frames: 100_000    # save weights every N frames (~10 per run)
 log_interval_frames: 5_000    # tensorboard scalar logging interval

@@ -365,10 +365,20 @@ def _train_loop(
                 device,
                 writer,
                 n_episodes=tcfg.eval_episodes,
-                record=False,
+                best_mean_reward=best_mean_reward,
             )
             if video_path:
                 eval_info = f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f})"
+                
+            if mean_r > best_mean_reward:
+                best_mean_reward = mean_r
+                _save_checkpoint(
+                    policy,
+                    optimizer,
+                    global_step,
+                    cfg.paths.checkpoint_dir,
+                    name=f"ckpt_best_mean_reward_{mean_r:.2f}.pt",
+                )
 
         # -- tensorboard logging -----------------------------------------------
         if (
