@@ -11,7 +11,7 @@ use_luminance: true
 stack_size: 4
 
 # action discretisation
-action_bins: 7
+action_bins: 5
 action_multidiscrete: true   # branching DQN
 
 # reward shaping
