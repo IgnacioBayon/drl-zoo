@@ -18,38 +18,15 @@ from torch.utils.tensorboard import SummaryWriter
 
 from src.environment import build_from_config
 from src.utils import get_device, get_loss_fn
-from src.utils import get_device, get_loss_fn
 
 from .models import DQNetwork
 
 log = logging.getLogger(__name__)
 
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _save_checkpoint(
-    policy: DQNetwork,
-    optimizer: torch.optim.Optimizer,
-    global_step: int,
-    checkpoint_dir: str,
-    name: str = "",
-) -> None:
-    """Save model and optimizer state to disk."""
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    filename = name or f"ckpt_{global_step}.pt"
-    path = os.path.join(checkpoint_dir, filename)
-    torch.save(
-        {
-            "global_step": global_step,
-            "policy": policy.state_dict(),
-            "optimizer": optimizer.state_dict(),
-        },
-        path,
-    )
 
 
 def _save_checkpoint(
@@ -91,7 +68,6 @@ def _run_eval_episode(
     """
     env = build_from_config(env_cfg, mode="eval")
     obs, _ = env.reset(seed=seed)
-    obs, _ = env.reset(seed=seed)
     frames: list[np.ndarray] = []
     total_reward = 0.0
     done = False
@@ -100,10 +76,6 @@ def _run_eval_episode(
         while not done:
             if record:
                 frames.append(env.unwrapped.render())
-            state_t = (
-                torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-                / 255.0
-            )
             state_t = (
                 torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
                 / 255.0
@@ -167,9 +139,6 @@ def _evaluate_and_record(
     mean_r, std_r = float(returns.mean()), float(returns.std())
     best_idx = int(returns.argmax())
     max_r = float(returns[best_idx])
-    mean_r, std_r = float(returns.mean()), float(returns.std())
-    best_idx = int(returns.argmax())
-    max_r = float(returns[best_idx])
 
     # Second pass: re-run one episode with recording to save the best video
     filename = ""
@@ -185,21 +154,8 @@ def _evaluate_and_record(
         os.makedirs(video_dir, exist_ok=True)
         filename = os.path.join(video_dir, f"eval_step_{step}_reward_{mean_r:.2f}.mp4")
         imageio.mimsave(filename, frames, fps=30)
-    filename = ""
-    if mean_r > best_mean_reward:
-        _, _, _, frames = _run_eval_episode(
-            policy,
-            env_cfg,
-            train_resolution,
-            device,
-            record=True,
-            seed=int(step) + best_idx,
-        )
-        os.makedirs(video_dir, exist_ok=True)
-        filename = os.path.join(video_dir, f"eval_step_{step}_reward_{mean_r:.2f}.mp4")
-        imageio.mimsave(filename, frames, fps=30)
 
-    # TODO: por que se pone en train aqui?
+    # restore train mode for subsequent gradient steps.
     policy.train()
 
     # Tensorboard logs
@@ -237,7 +193,9 @@ def _train_step(
         loss: Detached scalar loss tensor (no GPU sync — caller decides when to read).
     """
     buf_size = buffer["obs"].shape[0]
-    # Exclude the last `num_envs` slots: their next observation hasn't been written yet.
+    # next_obs is derived from obs[(idx + num_envs) % buf_size], so the last
+    # num_envs slots don't have valid next-obs yet.  The caller guarantees
+    # buf_filled >= batch_size + num_envs, keeping valid >= batch_size.
     valid = buf_filled - num_envs
     raw = torch.randint(0, valid, (batch_size,))
     # When the buffer hasn't wrapped, indices are sequential from 0.
@@ -260,7 +218,6 @@ def _train_step(
         max_target_q = target_policy(next_states).max(dim=2).values  # (B, Branches)
         targets = rewards.unsqueeze(1) + gamma * max_target_q * (1 - dones.unsqueeze(1))
 
-    loss = loss_fn(q_taken, targets)
     loss = loss_fn(q_taken, targets)
     optimizer.zero_grad()
     loss.backward()
@@ -321,13 +278,17 @@ def _train_loop(
     obs, _ = envs.reset(seed=int(cfg.seed))
     start = perf_counter()
 
+    start_train_after: int = int(tcfg.start_train_after)
+
     for step in range(1, steps + 1):
         # -- epsilon-greedy action selection -----------------------------------
+        # Epsilon stays at epsilon_start during warm-up (pure random collection)
+        frames_since_train = max(0, global_step - start_train_after)
         epsilon = max(
             tcfg.epsilon_end,
             tcfg.epsilon_start
             - (tcfg.epsilon_start - tcfg.epsilon_end)
-            * global_step
+            * frames_since_train
             / tcfg.epsilon_anneal_frames,
         )
         if np.random.rand() < epsilon:
@@ -371,7 +332,12 @@ def _train_loop(
                 global_step // tcfg.train_every != prev_step // tcfg.train_every
             )
 
-        if buf_filled >= tcfg.batch_size + num_envs and n_updates > 0:
+        # start_train_after dominates; batch_size + num_envs is a structural
+        # floor because _train_step samples from (buf_filled - num_envs) slots.
+        if (
+            buf_filled >= max(start_train_after, tcfg.batch_size + num_envs)
+            and n_updates > 0
+        ):
             for _ in range(n_updates):
                 step_losses.append(
                     _train_step(
@@ -379,7 +345,6 @@ def _train_loop(
                         policy,
                         target_policy,
                         optimizer,
-                        loss_fn,
                         loss_fn,
                         buf_filled,
                         buf_idx,
@@ -403,7 +368,7 @@ def _train_loop(
             global_step // tcfg.eval_interval_frames
             != prev_step // tcfg.eval_interval_frames
         ):
-            mean_r, std_r, max_r, video_path = _evaluate_and_record(
+            mean_r, std_r, max_r, _ = _evaluate_and_record(
                 policy,
                 global_step,
                 ecfg,
@@ -413,9 +378,9 @@ def _train_loop(
                 writer,
                 tcfg.eval_episodes,
             )
-            if video_path:
-                eval_info = f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f})"
-                
+            eval_info = f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f})"
+
+            # Save a checkpoint whenever we achieve a new best mean reward.
             if mean_r > best_mean_reward:
                 best_mean_reward = mean_r
                 _save_checkpoint(
