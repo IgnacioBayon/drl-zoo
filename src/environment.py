@@ -1,5 +1,7 @@
 import gymnasium as gym
 import numpy as np
+import torch
+import torch.nn.functional as F
 from gymnasium.wrappers import (
     AddRenderObservation,
     DiscretizeAction,
@@ -63,6 +65,27 @@ class GrayScalePixelObs(gym.ObservationWrapper):
         return (obs @ self._weights).astype(np.uint8)
 
 
+class DownscaleObservation(gym.ObservationWrapper):
+    """Downscale grayscale (H, W) observations via bilinear interpolation."""
+
+    def __init__(self, env: gym.Env, target_shape: tuple[int, int]) -> None:
+        super().__init__(env)
+        self._target_h, self._target_w = target_shape
+        self.observation_space = gym.spaces.Box(
+            0, 255, (self._target_h, self._target_w), dtype=np.uint8
+        )
+
+    def observation(self, obs: np.ndarray) -> np.ndarray:
+        t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        t = F.interpolate(
+            t,
+            size=(self._target_h, self._target_w),
+            mode="bilinear",
+            align_corners=False,
+        )
+        return t.squeeze().clamp(0, 255).to(torch.uint8).numpy()
+
+
 def build_envs(
     env_name: str = "Hopper-v5",
     num_envs: int = 1,
@@ -71,6 +94,7 @@ def build_envs(
     stack_size: int = 4,
     use_luminance: bool = False,
     resolution: tuple[int, int] = (480, 480),
+    train_resolution: tuple[int, int] | None = None,
     use_com_reward: bool = False,
     multidiscrete: bool = False,
     vectorized: bool = True,
@@ -82,6 +106,8 @@ def build_envs(
         if render_mode != "human":
             env = AddRenderObservation(env)
             env = GrayScalePixelObs(env, use_luminance)
+            if train_resolution is not None:
+                env = DownscaleObservation(env, train_resolution)
         env = FrameStackObservation(env, stack_size)
         return env
 
@@ -112,17 +138,13 @@ def build_env(*args, **kwargs):
 
 
 def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
-    resolution = (
-        tuple(env_cfg.train_resolution)
-        if mode == "train"
-        else tuple(env_cfg.full_resolution)
-    )
     kwargs: dict = dict(
         env_name=env_cfg.name,
         num_envs=env_cfg.num_envs,
         # observation space
         render_mode="rgb_array",
-        resolution=resolution,
+        resolution=tuple(env_cfg.full_resolution),
+        train_resolution=tuple(env_cfg.train_resolution),
         stack_size=env_cfg.stack_size,
         use_luminance=env_cfg.use_luminance,
         # action space discretisation

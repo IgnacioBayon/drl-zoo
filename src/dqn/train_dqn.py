@@ -11,7 +11,6 @@ from time import perf_counter
 import imageio
 import numpy as np
 import torch
-import torch.nn.functional as F
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
@@ -53,7 +52,6 @@ def _save_checkpoint(
 def _run_eval_episode(
     policy: DQNetwork,
     env_cfg: DictConfig,
-    train_resolution: tuple[int, int],
     device: torch.device,
     record: bool = False,
     seed: int | None = None,
@@ -80,9 +78,6 @@ def _run_eval_episode(
                 torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
                 / 255.0
             )
-            state_t = F.interpolate(
-                state_t, size=train_resolution, mode="bilinear", align_corners=False
-            )
             action = policy(state_t).argmax(dim=2).squeeze(0).cpu().numpy()
             obs, reward, terminated, truncated, _ = env.step(action)
             total_reward += float(reward)
@@ -103,7 +98,6 @@ def _evaluate_and_record(
     policy: DQNetwork,
     step: int,
     env_cfg: DictConfig,
-    train_resolution: tuple[int, int],
     video_dir: str,
     device: torch.device,
     writer: SummaryWriter,
@@ -130,7 +124,6 @@ def _evaluate_and_record(
         returns[i], final_torso_xs[i], final_com_xs[i], _ = _run_eval_episode(
             policy,
             env_cfg,
-            train_resolution,
             device,
             record=False,
             seed=int(step) + i,
@@ -143,16 +136,16 @@ def _evaluate_and_record(
     # Second pass: re-run one episode with recording to save the best video
     filename = ""
     if mean_r > best_mean_reward:
-        _, _, _, frames = _run_eval_episode(
+        reward, _, _, frames = _run_eval_episode(
             policy,
             env_cfg,
-            train_resolution,
             device,
             record=True,
             seed=int(step) + best_idx,
         )
+        assert reward - max_r < 1e-2, "Re-evaluation reward should match the first pass"
         os.makedirs(video_dir, exist_ok=True)
-        filename = os.path.join(video_dir, f"eval_step_{step}_reward_{mean_r:.2f}.mp4")
+        filename = os.path.join(video_dir, f"eval_step_{step}_reward_{reward:.2f}.mp4")
         imageio.mimsave(filename, frames, fps=30)
 
     # restore train mode for subsequent gradient steps.
@@ -185,6 +178,7 @@ def _train_step(
     num_envs: int,
     batch_size: int,
     gamma: float,
+    max_grad_norm: float,
     device: torch.device,
 ) -> torch.Tensor:
     """Sample a mini-batch from the replay buffer and perform one gradient step.
@@ -221,6 +215,8 @@ def _train_step(
     loss = loss_fn(q_taken, targets)
     optimizer.zero_grad()
     loss.backward()
+    # Gradient clipping
+    torch.nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
     optimizer.step()
     # Return detached scalar — avoids a GPU sync on every training step.
     return loss.detach()
@@ -257,7 +253,6 @@ def _train_loop(
     tcfg = cfg.train
     ecfg = cfg.env
     num_envs: int = ecfg.num_envs
-    train_resolution = tuple(ecfg.train_resolution)
 
     total_frames = int(tcfg.total_frames)
     steps = math.ceil(total_frames / num_envs)
@@ -351,6 +346,7 @@ def _train_loop(
                         num_envs,
                         tcfg.batch_size,
                         tcfg.gamma,
+                        tcfg.max_grad_norm,
                         device,
                     )
                 )
@@ -372,11 +368,11 @@ def _train_loop(
                 policy,
                 global_step,
                 ecfg,
-                train_resolution,
                 cfg.paths.video_dir,
                 device,
                 writer,
                 tcfg.eval_episodes,
+                best_mean_reward,
             )
             eval_info = f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f})"
 
