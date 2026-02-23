@@ -155,6 +155,7 @@ def _evaluate_and_record(
         filename = os.path.join(video_dir, f"eval_step_{step}_reward_{mean_r:.2f}.mp4")
         imageio.mimsave(filename, frames, fps=30)
 
+    # TODO: por que se pone en train aqui?
     policy.train()
 
     # Tensorboard logs
@@ -270,7 +271,8 @@ def _train_loop(
     # Accumulate detached loss tensors between log events; sync once per interval.
     step_losses: list[torch.Tensor] = []
     avg_loss = 0.0
-    best_mean_reward = float("-inf")
+    # TODO: esta variable no se usa
+    # best_mean_reward = float("-inf")
 
     obs, _ = envs.reset(seed=int(cfg.seed))
     start = perf_counter()
