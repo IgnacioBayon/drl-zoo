@@ -80,7 +80,6 @@ def _run_eval_episode(
     device: torch.device,
     record: bool = False,
     seed: int | None = None,
-    seed: int | None = None,
 ) -> tuple[float, float, float, list[np.ndarray]]:
     """Run one greedy episode. Optionally capture render frames.
 
@@ -138,7 +137,6 @@ def _evaluate_and_record(
     writer: SummaryWriter,
     n_episodes: int,
     best_mean_reward: float = float("-inf"),
-    best_mean_reward: float = float("-inf"),
 ) -> tuple[float, float, float, str]:
     """Run *n_episodes* greedy evaluations, optionally record a video.
 
@@ -158,13 +156,6 @@ def _evaluate_and_record(
     final_com_xs = np.empty(n_episodes, dtype=np.float64)
     for i in range(n_episodes):
         returns[i], final_torso_xs[i], final_com_xs[i], _ = _run_eval_episode(
-            policy,
-            env_cfg,
-            train_resolution,
-            device,
-            record=False,
-            seed=int(step) + i,
-        )
             policy,
             env_cfg,
             train_resolution,
@@ -233,7 +224,6 @@ def _train_step(
     target_policy: DQNetwork,
     optimizer: torch.optim.Optimizer,
     loss_fn: torch.nn.Module,
-    loss_fn: torch.nn.Module,
     buf_filled: int,
     buf_idx: int,
     num_envs: int,
@@ -289,7 +279,6 @@ def _train_loop(
     envs,
     policy: DQNetwork,
     target_policy: DQNetwork,
-    loss_fn: torch.nn.Module,
     loss_fn: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     buffer: dict[str, torch.Tensor],
@@ -372,7 +361,6 @@ def _train_loop(
         buf_filled = min(buf_filled + num_envs, tcfg.buffer_size)
         obs = next_obs
         prev_step = global_step
-        prev_step = global_step
         global_step += num_envs
 
         # -- gradient updates --------------------------------------------------
@@ -402,7 +390,6 @@ def _train_loop(
                     )
                 )
 
-        # -- target update ------------------------------------------------
         # -- target update ------------------------------------------------
         if (
             global_step // tcfg.target_update_frames
@@ -506,7 +493,6 @@ def train_dqn(cfg: DictConfig) -> None:
     target_policy.load_state_dict(policy.state_dict())
 
     loss_fn = get_loss_fn(cfg.train.loss_fn)
-    loss_fn = get_loss_fn(cfg.train.loss_fn)
     optimizer = torch.optim.AdamW(policy.parameters(), lr=cfg.train.lr)
 
     # -- CPU replay buffer (uint8 to save RAM) ---------------------------------
@@ -534,7 +520,6 @@ def train_dqn(cfg: DictConfig) -> None:
     )
 
     elapsed, avg_fps = _train_loop(
-        cfg, envs, policy, target_policy, loss_fn, optimizer, buffer, device, writer
         cfg, envs, policy, target_policy, loss_fn, optimizer, buffer, device, writer
     )
     writer.close()
