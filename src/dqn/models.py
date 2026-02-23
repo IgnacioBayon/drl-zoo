@@ -78,9 +78,9 @@ class EncoderDQN(nn.Module):
                     padding=int(layer.padding),
                 )
             )
-            # TODO: is there a ReLU in the original implementation?
             conv_layers.append(nn.ReLU())
             in_ch = int(layer.out_channels)
+
         self.conv = nn.Sequential(*conv_layers)
 
         # --- infer flatten dim --- E.g. not having to calculate 32 * 9 * 9
@@ -232,7 +232,6 @@ class RainbowDQN(nn.Module):
             sigma0=sigma0,
         )
 
-        # Support for distributional DQN  # TODO: ???
         self.register_buffer(
             "support",
             torch.linspace(vmin, vmax, atoms),

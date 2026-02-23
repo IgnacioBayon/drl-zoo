@@ -18,15 +18,38 @@ from torch.utils.tensorboard import SummaryWriter
 
 from src.environment import build_from_config
 from src.utils import get_device, get_loss_fn
+from src.utils import get_device, get_loss_fn
 
 from .models import DQNetwork
 
 log = logging.getLogger(__name__)
 
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _save_checkpoint(
+    policy: DQNetwork,
+    optimizer: torch.optim.Optimizer,
+    global_step: int,
+    checkpoint_dir: str,
+    name: str = "",
+) -> None:
+    """Save model and optimizer state to disk."""
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    filename = name or f"ckpt_{global_step}.pt"
+    path = os.path.join(checkpoint_dir, filename)
+    torch.save(
+        {
+            "global_step": global_step,
+            "policy": policy.state_dict(),
+            "optimizer": optimizer.state_dict(),
+        },
+        path,
+    )
 
 
 def _save_checkpoint(
@@ -57,6 +80,7 @@ def _run_eval_episode(
     device: torch.device,
     record: bool = False,
     seed: int | None = None,
+    seed: int | None = None,
 ) -> tuple[float, float, float, list[np.ndarray]]:
     """Run one greedy episode. Optionally capture render frames.
 
@@ -68,6 +92,7 @@ def _run_eval_episode(
     """
     env = build_from_config(env_cfg, mode="eval")
     obs, _ = env.reset(seed=seed)
+    obs, _ = env.reset(seed=seed)
     frames: list[np.ndarray] = []
     total_reward = 0.0
     done = False
@@ -76,6 +101,10 @@ def _run_eval_episode(
         while not done:
             if record:
                 frames.append(env.unwrapped.render())
+            state_t = (
+                torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                / 255.0
+            )
             state_t = (
                 torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
                 / 255.0
@@ -109,6 +138,7 @@ def _evaluate_and_record(
     writer: SummaryWriter,
     n_episodes: int,
     best_mean_reward: float = float("-inf"),
+    best_mean_reward: float = float("-inf"),
 ) -> tuple[float, float, float, str]:
     """Run *n_episodes* greedy evaluations, optionally record a video.
 
@@ -135,7 +165,17 @@ def _evaluate_and_record(
             record=False,
             seed=int(step) + i,
         )
+            policy,
+            env_cfg,
+            train_resolution,
+            device,
+            record=False,
+            seed=int(step) + i,
+        )
 
+    mean_r, std_r = float(returns.mean()), float(returns.std())
+    best_idx = int(returns.argmax())
+    max_r = float(returns[best_idx])
     mean_r, std_r = float(returns.mean()), float(returns.std())
     best_idx = int(returns.argmax())
     max_r = float(returns[best_idx])
@@ -154,7 +194,21 @@ def _evaluate_and_record(
         os.makedirs(video_dir, exist_ok=True)
         filename = os.path.join(video_dir, f"eval_step_{step}_reward_{mean_r:.2f}.mp4")
         imageio.mimsave(filename, frames, fps=30)
+    filename = ""
+    if mean_r > best_mean_reward:
+        _, _, _, frames = _run_eval_episode(
+            policy,
+            env_cfg,
+            train_resolution,
+            device,
+            record=True,
+            seed=int(step) + best_idx,
+        )
+        os.makedirs(video_dir, exist_ok=True)
+        filename = os.path.join(video_dir, f"eval_step_{step}_reward_{mean_r:.2f}.mp4")
+        imageio.mimsave(filename, frames, fps=30)
 
+    # TODO: por que se pone en train aqui?
     policy.train()
 
     # Tensorboard logs
@@ -178,6 +232,7 @@ def _train_step(
     policy: DQNetwork,
     target_policy: DQNetwork,
     optimizer: torch.optim.Optimizer,
+    loss_fn: torch.nn.Module,
     loss_fn: torch.nn.Module,
     buf_filled: int,
     buf_idx: int,
@@ -216,6 +271,7 @@ def _train_step(
         targets = rewards.unsqueeze(1) + gamma * max_target_q * (1 - dones.unsqueeze(1))
 
     loss = loss_fn(q_taken, targets)
+    loss = loss_fn(q_taken, targets)
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
@@ -233,6 +289,7 @@ def _train_loop(
     envs,
     policy: DQNetwork,
     target_policy: DQNetwork,
+    loss_fn: torch.nn.Module,
     loss_fn: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     buffer: dict[str, torch.Tensor],
@@ -315,6 +372,7 @@ def _train_loop(
         buf_filled = min(buf_filled + num_envs, tcfg.buffer_size)
         obs = next_obs
         prev_step = global_step
+        prev_step = global_step
         global_step += num_envs
 
         # -- gradient updates --------------------------------------------------
@@ -334,6 +392,7 @@ def _train_loop(
                         target_policy,
                         optimizer,
                         loss_fn,
+                        loss_fn,
                         buf_filled,
                         buf_idx,
                         num_envs,
@@ -343,6 +402,7 @@ def _train_loop(
                     )
                 )
 
+        # -- target update ------------------------------------------------
         # -- target update ------------------------------------------------
         if (
             global_step // tcfg.target_update_frames
@@ -364,8 +424,7 @@ def _train_loop(
                 cfg.paths.video_dir,
                 device,
                 writer,
-                n_episodes=tcfg.eval_episodes,
-                best_mean_reward=best_mean_reward,
+                tcfg.eval_episodes,
             )
             if video_path:
                 eval_info = f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f})"
@@ -447,6 +506,7 @@ def train_dqn(cfg: DictConfig) -> None:
     target_policy.load_state_dict(policy.state_dict())
 
     loss_fn = get_loss_fn(cfg.train.loss_fn)
+    loss_fn = get_loss_fn(cfg.train.loss_fn)
     optimizer = torch.optim.AdamW(policy.parameters(), lr=cfg.train.lr)
 
     # -- CPU replay buffer (uint8 to save RAM) ---------------------------------
@@ -474,6 +534,7 @@ def train_dqn(cfg: DictConfig) -> None:
     )
 
     elapsed, avg_fps = _train_loop(
+        cfg, envs, policy, target_policy, loss_fn, optimizer, buffer, device, writer
         cfg, envs, policy, target_policy, loss_fn, optimizer, buffer, device, writer
     )
     writer.close()

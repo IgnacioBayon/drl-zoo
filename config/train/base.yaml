@@ -11,7 +11,7 @@ gamma: 0.99
 total_frames: 1_000_000
 
 # replay buffer
-buffer_size: 100_000
+buffer_size: 500_000
 batch_size: 64
 
 # exploration (linear ε-decay)
