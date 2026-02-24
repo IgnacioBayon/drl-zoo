@@ -25,5 +25,5 @@ healthy_z_range: [0.6, 100.0]     # Default is [0.7, inf]
 healthy_angle_range: [-1.0, 1.0]  # Default is [-0.2, 0.2]
 reset_noise_scale: 0.005          # Default is 0.005
 
-xml_file: null
-# xml_file: ".venv/Lib/site-packages/gymnasium/envs/mujoco/assets/hopper.xml"
+# xml_file: null
+xml_file: ".venv/Lib/site-packages/gymnasium/envs/mujoco/assets/hopper.xml"

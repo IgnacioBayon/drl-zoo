@@ -251,14 +251,8 @@ class NStepAccumulator:
         ]
 
     def append(
-        self,
-        obs: np.ndarray,
-        actions: np.ndarray,
-        rewards: np.ndarray,
-        next_obs: np.ndarray,
-        dones: np.ndarray,
+        self, obs, actions, rewards, next_obs, terminations, truncations, infos
     ) -> None:
-        """Process one vectorised step and flush completed n-step transitions."""
         num_envs = len(rewards)
         for i in range(num_envs):
             self._fifos[i].append(
@@ -269,13 +263,12 @@ class NStepAccumulator:
                 )
             )
 
-            if dones[i]:
-                # Flush all pending transitions — episode boundary
-                nxt = torch.as_tensor(next_obs[i])
+            if terminations[i] or truncations[i]:
+                nxt = torch.as_tensor(infos["final_observation"][i])
+                is_term = float(terminations[i])  # 1.0 if dead, 0.0 if truncated
                 while self._fifos[i]:
-                    self._flush_front(i, nxt, done=1.0)
+                    self._flush_front(i, nxt, done=is_term)
             elif len(self._fifos[i]) == self._n:
-                # Full n-step without episode end
                 self._flush_front(i, torch.as_tensor(next_obs[i]), done=0.0)
 
     def _flush_front(self, worker: int, next_obs: torch.Tensor, done: float) -> None:
@@ -322,6 +315,7 @@ def _c51_loss(
     delta_z = (vmax - vmin) / (atoms - 1)
 
     # --- Online network: log-probabilities for chosen actions -----------------
+
     out = online(obs)
     log_p = F.log_softmax(out["logits"], dim=-1)  # (B, br, bins, atoms)
     # Gather along bins dim:  actions (B, br) → (B, br, 1, atoms)
@@ -391,6 +385,10 @@ def _train_step(
     batch, indices, weights = per_buffer.sample(batch_size, beta)
     weights = weights.to(device)
 
+    # Sample noise for NoisyNets
+    online.reset_noise()
+    target.reset_noise()
+
     losses = _c51_loss(online, target, batch, device)  # (B,)
     loss = (losses * weights).mean()
 
@@ -446,12 +444,13 @@ def _train_loop(
 
     for step in range(1, steps + 1):
         # -- action selection (noisy nets — no ε-greedy) -----------------------
+        online.reset_noise()  # Resample noise for each action selection
         with torch.no_grad():
             obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
             q = online(obs_t)["q"]  # (num_envs, branches, bins)
             actions = q.argmax(dim=-1).cpu().numpy()  # (num_envs, branches)
 
-        next_obs, rewards, terminations, truncations, _ = envs.step(actions)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         dones = np.logical_or(terminations, truncations)
 
         # -- per-worker return tracking ----------------------------------------
@@ -465,7 +464,9 @@ def _train_loop(
             worker_returns[i] = 0.0
 
         # -- n-step accumulation → PER buffer ----------------------------------
-        n_step_acc.append(obs, actions, rewards, next_obs, dones)
+        n_step_acc.append(
+            obs, actions, rewards, next_obs, terminations, truncations, infos
+        )
 
         obs = next_obs
         prev_step = global_step
@@ -602,7 +603,6 @@ def train_rainbow(cfg: DictConfig) -> None:
     online = instantiate(cfg.model, num_branches=num_branches).to(device)
     target = instantiate(cfg.model, num_branches=num_branches).to(device)
     target.load_state_dict(online.state_dict())
-    target.eval()
 
     optimizer = torch.optim.Adam(online.parameters(), lr=cfg.train.lr, eps=1.5e-4)
 

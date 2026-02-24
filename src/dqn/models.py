@@ -80,40 +80,44 @@ class DQNetwork(nn.Module):
 # ---------------------------------------------------------------------------
 # Rainbow DQN components
 # ---------------------------------------------------------------------------
-
-
 class NoisyLinear(nn.Module):
-    """Factorised NoisyNet linear layer (Fortunato et al., 2017).
-
-    Samples independent Gaussian noise per forward call during training;
-    uses mean weights at eval time.
-
-    Args:
-        in_features: Input dimensionality.
-        out_features: Output dimensionality.
-        sigma0: Initial noise standard deviation scaling factor.
-    """
-
     def __init__(
         self, in_features: int, out_features: int, sigma0: float = 0.5
     ) -> None:
         super().__init__()
-        bound = 1.0 / (in_features**0.5)
+        self.in_features = in_features
+        self.out_features = out_features
+
+        bound = 1.0 / in_features**0.5
         self.weight_mu = nn.Parameter(
             torch.empty(out_features, in_features).uniform_(-bound, bound)
         )
         self.bias_mu = nn.Parameter(torch.empty(out_features).uniform_(-bound, bound))
 
-        init_sigma = sigma0 / (in_features**0.5)
+        init_sigma = sigma0 / in_features**0.5
         self.weight_sigma = nn.Parameter(
             torch.full((out_features, in_features), init_sigma)
         )
         self.bias_sigma = nn.Parameter(torch.full((out_features,), init_sigma))
 
+        self.register_buffer("weight_epsilon", torch.zeros(out_features, in_features))
+        self.register_buffer("bias_epsilon", torch.zeros(out_features))
+        self.reset_noise()
+
+    def _scale_noise(self, size: int) -> torch.Tensor:
+        x = torch.randn(size)
+        return x.sign().mul_(x.abs().sqrt_())
+
+    def reset_noise(self) -> None:
+        epsilon_in = self._scale_noise(self.in_features)
+        epsilon_out = self._scale_noise(self.out_features)
+        self.weight_epsilon.copy_(epsilon_out.outer(epsilon_in))
+        self.bias_epsilon.copy_(epsilon_out)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:
-            w = self.weight_mu + self.weight_sigma * torch.randn_like(self.weight_sigma)
-            b = self.bias_mu + self.bias_sigma * torch.randn_like(self.bias_sigma)
+            w = self.weight_mu + self.weight_sigma * self.weight_epsilon
+            b = self.bias_mu + self.bias_sigma * self.bias_epsilon
         else:
             w, b = self.weight_mu, self.bias_mu
         return F.linear(x, w, b)
@@ -227,3 +231,9 @@ class RainbowDQN(nn.Module):
         probs = F.softmax(logits, dim=-1)
         q = (probs * self.support).sum(dim=-1)  # (B, branches, bins)
         return {"logits": logits, "probs": probs, "q": q}
+
+    def reset_noise(self) -> None:
+        """Resample noise for all NoisyLinear layers."""
+        for module in self.modules():
+            if isinstance(module, NoisyLinear):
+                module.reset_noise()

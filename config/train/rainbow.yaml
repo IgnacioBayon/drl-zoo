@@ -11,7 +11,7 @@ gamma: 0.99
 total_frames: 2_000_000
 
 # replay buffer
-buffer_size: 1_000_000
+buffer_size: 500_000
 batch_size: 32
 start_train_after: 80_000    # collect this many frames before the first gradient step
 
@@ -26,7 +26,7 @@ n_step: 3
 # Prioritized Experience Replay
 per_alpha: 0.5        # prioritisation exponent (0 = uniform)
 per_beta_start: 0.4    # initial IS-weight correction
-per_beta_frames: ${env.total_frames}  # anneal β → 1.0 over this many frames
+per_beta_frames: ${.total_frames}  # anneal β → 1.0 over this many frames
 
 # logging / recording
 eval_interval_frames: 5_000  # evaluate & record every N frames
