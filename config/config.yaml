@@ -1,6 +1,6 @@
 defaults:
-  - model: dqn        # choose dqn or rainbow
-  - train: base
+  - train: dqn
+  - model: ${train}        # choose dqn or rainbow
   - env: hopper
   - _self_
 

@@ -1,25 +1,34 @@
-defaults:
-  - base
-  - _self_
+device: auto   # auto | cpu | cuda
 
-# --- Rainbow-specific overrides ---
+# loss
+loss_fn: huber  # mse | huber
 
-# Adam optimiser (Rainbow paper uses 6.25e-5 with eps=1.5e-4)
-lr: 6.25e-5
+# optimiser
+lr: 3e-4
+
+# RL
+gamma: 0.99
+total_frames: 2_000_000
+
+# replay buffer
+buffer_size: 1_000_000
+batch_size: 32
+start_train_after: 80_000    # collect this many frames before the first gradient step
+
+# network updates
+train_every: 4                # gradient step every N env frames
+target_update_frames: 10_000  # hard copy policy → target (decoupled from eval interval)
+max_grad_norm: 10.0           # clip gradient L2 norm
 
 # Multi-step returns
 n_step: 3
 
 # Prioritized Experience Replay
-per_alpha: 0.6         # prioritisation exponent (0 = uniform)
+per_alpha: 0.5        # prioritisation exponent (0 = uniform)
 per_beta_start: 0.4    # initial IS-weight correction
-per_beta_frames: 100_000  # anneal β → 1.0 over this many frames
+per_beta_frames: ${env.total_frames}  # anneal β → 1.0 over this many frames
 
-# Rainbow uses NoisyNets instead of ε-greedy, but we keep these
-# in the config to avoid missing-key errors from the base schema.
-epsilon_start: 0.0
-epsilon_end: 0.0
-epsilon_anneal_frames: 1
-
-# Target network update (Rainbow paper: every 8000 gradient steps ≈ 32000 frames)
-target_update_frames: 32_000
+# logging / recording
+eval_interval_frames: 5_000  # evaluate & record every N frames
+eval_episodes: 10             # number of greedy episodes per evaluation
+log_interval_frames: 5_000    # tensorboard scalar logging interval
