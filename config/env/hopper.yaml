@@ -2,12 +2,12 @@ defaults:
   - _self_
 
 name: "Hopper-v5"
-num_envs: 16
+num_envs: 1
 
 # observation
-train_resolution: [120, 120]
+train_resolution: [84, 84]
 full_resolution: [480, 480]
-use_luminance: false
+use_luminance: true
 stack_size: 4
 
 # action discretisation
@@ -24,6 +24,7 @@ ctrl_cost_weight: 0.0001     # Default is 0.001.
 healthy_z_range: [0.6, 100.0]     # Default is [0.7, inf]
 healthy_angle_range: [-1.0, 1.0]  # Default is [-0.2, 0.2]
 reset_noise_scale: 0.005          # Default is 0.005
+max_episode_steps: 4000           # ~30s of sim time (dt=0.008) and 2m or real time
 
 # xml_file: null
 xml_file: ".venv/Lib/site-packages/gymnasium/envs/mujoco/assets/hopper.xml"

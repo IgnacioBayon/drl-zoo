@@ -140,6 +140,8 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
     )
     if env_cfg.xml_file is not None:
         kwargs["xml_file"] = env_cfg.xml_file
+    if env_cfg.get("max_episode_steps") is not None:
+        kwargs["max_episode_steps"] = int(env_cfg.max_episode_steps)
     return build_envs(**kwargs)
 
 

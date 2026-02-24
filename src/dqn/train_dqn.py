@@ -33,8 +33,6 @@ def _train_step(
     optimizer: torch.optim.Optimizer,
     loss_fn: torch.nn.Module,
     buf_filled: int,
-    buf_idx: int,
-    num_envs: int,
     batch_size: int,
     gamma: float,
     max_grad_norm: float,
@@ -45,19 +43,10 @@ def _train_step(
     Returns:
         loss: Detached scalar loss tensor (no GPU sync — caller decides when to read).
     """
-    buf_size = buffer["obs"].shape[0]
-    # next_obs is derived from obs[(idx + num_envs) % buf_size], so the last
-    # num_envs slots don't have valid next-obs yet.  The caller guarantees
-    # buf_filled >= batch_size + num_envs, keeping valid >= batch_size.
-    valid = buf_filled - num_envs
-    raw = torch.randint(0, valid, (batch_size,))
-    # When the buffer hasn't wrapped, indices are sequential from 0.
-    # When full, rotate past the invalid write-head region.
-    indices = raw if buf_filled < buf_size else (raw + buf_idx) % buf_size
-    next_indices = (indices + num_envs) % buf_size
+    indices = torch.randint(0, buf_filled, (batch_size,))
 
     states = buffer["obs"][indices].to(device, dtype=torch.float32) / 255.0
-    next_states = buffer["obs"][next_indices].to(device, dtype=torch.float32) / 255.0
+    next_states = buffer["next_obs"][indices].to(device, dtype=torch.float32) / 255.0
     actions = buffer["actions"][indices].to(device, dtype=torch.long)
     rewards = buffer["rewards"][indices].to(device, dtype=torch.float32)
     dones = buffer["dones"][indices].to(device, dtype=torch.float32)
@@ -74,10 +63,8 @@ def _train_step(
     loss = loss_fn(q_taken, targets)
     optimizer.zero_grad()
     loss.backward()
-    # Gradient clipping
     torch.nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
     optimizer.step()
-    # Return detached scalar — avoids a GPU sync on every training step.
     return loss.detach()
 
 
@@ -166,11 +153,15 @@ def _train_loop(
             worker_returns[i] = 0.0
 
         # -- store transition --------------------------------------------------
+        # With gymnasium 1.2+ NEXT_STEP auto-reset, next_obs[i] is the *final*
+        # observation when dones[i]=True (reset happens on the next step call).
+        # Storing next_obs explicitly avoids cross-episode corruption.
         indices = np.arange(buf_idx, buf_idx + num_envs) % tcfg.buffer_size
         buffer["obs"][indices] = torch.as_tensor(obs)
+        buffer["next_obs"][indices] = torch.as_tensor(next_obs)
         buffer["actions"][indices] = torch.as_tensor(actions, dtype=torch.uint8)
         buffer["rewards"][indices] = torch.as_tensor(rewards, dtype=torch.float32)
-        buffer["dones"][indices] = torch.as_tensor(dones, dtype=torch.uint8)
+        buffer["dones"][indices] = torch.as_tensor(terminations, dtype=torch.uint8)
 
         buf_idx = (buf_idx + num_envs) % tcfg.buffer_size
         buf_filled = min(buf_filled + num_envs, tcfg.buffer_size)
@@ -186,12 +177,7 @@ def _train_loop(
                 global_step // tcfg.train_every != prev_step // tcfg.train_every
             )
 
-        # start_train_after dominates; batch_size + num_envs is a structural
-        # floor because _train_step samples from (buf_filled - num_envs) slots.
-        if (
-            buf_filled >= max(start_train_after, tcfg.batch_size + num_envs)
-            and n_updates > 0
-        ):
+        if buf_filled >= max(start_train_after, tcfg.batch_size) and n_updates > 0:
             for _ in range(n_updates):
                 step_losses.append(
                     _train_step(
@@ -201,8 +187,6 @@ def _train_loop(
                         optimizer,
                         loss_fn,
                         buf_filled,
-                        buf_idx,
-                        num_envs,
                         tcfg.batch_size,
                         tcfg.gamma,
                         tcfg.max_grad_norm,
@@ -324,9 +308,10 @@ def train_dqn(cfg: DictConfig) -> None:
     res_h, res_w = tuple(cfg.env.train_resolution)
     buf_sz = int(cfg.train.buffer_size)
     stk = cfg.env.stack_size
-    # next_obs is derived from obs[(i + num_envs) % buf_sz] — no duplicate storage.
+    obs_shape = (buf_sz, stk, res_h, res_w)
     buffer: dict[str, torch.Tensor] = {
-        "obs": torch.zeros((buf_sz, stk, res_h, res_w), dtype=torch.uint8),
+        "obs": torch.zeros(obs_shape, dtype=torch.uint8),
+        "next_obs": torch.zeros(obs_shape, dtype=torch.uint8),
         "actions": torch.zeros((buf_sz, num_branches), dtype=torch.uint8),
         "rewards": torch.zeros((buf_sz,), dtype=torch.float32),
         "dones": torch.zeros((buf_sz,), dtype=torch.uint8),

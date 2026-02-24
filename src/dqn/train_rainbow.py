@@ -251,8 +251,21 @@ class NStepAccumulator:
         ]
 
     def append(
-        self, obs, actions, rewards, next_obs, terminations, truncations, infos
+        self,
+        obs: np.ndarray,
+        actions: np.ndarray,
+        rewards: np.ndarray,
+        next_obs: np.ndarray,
+        terminations: np.ndarray,
+        truncations: np.ndarray,
     ) -> None:
+        """Process one vectorised step and flush completed n-step transitions.
+
+        With gymnasium 1.2+ ``AutoresetMode.NEXT_STEP``, ``next_obs[i]`` is
+        the **final** observation when ``dones[i]=True`` (reset happens on
+        the *next* call to ``step``).  We use it directly as the bootstrap
+        state, setting ``done=1.0`` only for true terminations.
+        """
         num_envs = len(rewards)
         for i in range(num_envs):
             self._fifos[i].append(
@@ -264,8 +277,8 @@ class NStepAccumulator:
             )
 
             if terminations[i] or truncations[i]:
-                nxt = torch.as_tensor(infos["final_observation"][i])
-                is_term = float(terminations[i])  # 1.0 if dead, 0.0 if truncated
+                nxt = torch.as_tensor(next_obs[i])
+                is_term = float(terminations[i])  # 1.0 only if truly dead
                 while self._fifos[i]:
                     self._flush_front(i, nxt, done=is_term)
             elif len(self._fifos[i]) == self._n:
@@ -464,9 +477,7 @@ def _train_loop(
             worker_returns[i] = 0.0
 
         # -- n-step accumulation → PER buffer ----------------------------------
-        n_step_acc.append(
-            obs, actions, rewards, next_obs, terminations, truncations, infos
-        )
+        n_step_acc.append(obs, actions, rewards, next_obs, terminations, truncations)
 
         obs = next_obs
         prev_step = global_step
