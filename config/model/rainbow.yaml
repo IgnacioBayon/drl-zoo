@@ -10,7 +10,7 @@ num_branches: ???          # filled at runtime from env action space
 # C51 distributional support
 atoms: 51
 vmin: -10.0
-vmax: 10.0
+vmax: 150.0
 
 # NoisyNet initial sigma
 noisy_sigma0: 0.5

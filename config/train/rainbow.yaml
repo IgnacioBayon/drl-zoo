@@ -4,7 +4,7 @@ device: auto   # auto | cpu | cuda
 loss_fn: huber  # mse | huber
 
 # optimiser
-lr: 3e-4
+lr: 2e-4
 
 # RL
 gamma: 0.99
