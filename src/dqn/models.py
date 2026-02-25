@@ -102,17 +102,24 @@ class NoisyLinear(nn.Module):
 
         self.register_buffer("weight_epsilon", torch.zeros(out_features, in_features))
         self.register_buffer("bias_epsilon", torch.zeros(out_features))
+        # Pre-allocated noise vectors (avoids torch.randn allocation per reset)
+        self.register_buffer("_noise_in", torch.zeros(in_features))
+        self.register_buffer("_noise_out", torch.zeros(out_features))
         self.reset_noise()
 
-    def _scale_noise(self, size: int) -> torch.Tensor:
-        x = torch.randn(size)
-        return x.sign().mul_(x.abs().sqrt_())
+    @staticmethod
+    def _factored_noise_(x: torch.Tensor) -> torch.Tensor:
+        """In-place f(x) = sign(x) * sqrt(|x|) on a pre-filled N(0,1) buffer."""
+        s = x.sign()
+        return x.abs_().sqrt_().mul_(s)
 
     def reset_noise(self) -> None:
-        epsilon_in = self._scale_noise(self.in_features)
-        epsilon_out = self._scale_noise(self.out_features)
-        self.weight_epsilon.copy_(epsilon_out.outer(epsilon_in))
-        self.bias_epsilon.copy_(epsilon_out)
+        self._noise_in.normal_()
+        self._noise_out.normal_()
+        self._factored_noise_(self._noise_in)
+        self._factored_noise_(self._noise_out)
+        self.weight_epsilon.copy_(self._noise_out.outer(self._noise_in))
+        self.bias_epsilon.copy_(self._noise_out)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.training:

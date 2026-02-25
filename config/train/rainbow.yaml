@@ -4,7 +4,7 @@ device: auto   # auto | cpu | cuda
 loss_fn: huber  # mse | huber
 
 # optimiser
-lr: 2e-4
+lr: 6.25e-4            # standard Rainbow lr (Hessel et al. 2017)
 
 # RL
 gamma: 0.99
@@ -17,7 +17,7 @@ start_train_after: 50_000    # collect this many frames before the first gradien
 
 # network updates
 train_every: 4                # gradient step every N env frames
-target_update_frames: 5_000  # hard copy policy → target (decoupled from eval interval)
+target_update_frames: 32_000  # ~8k gradient steps between copies (standard Rainbow)
 max_grad_norm: 10.0           # clip gradient L2 norm
 
 # Multi-step returns
@@ -29,6 +29,6 @@ per_beta_start: 0.4    # initial IS-weight correction
 per_beta_frames: ${.total_frames}  # anneal β → 1.0 over this many frames
 
 # logging / recording
-eval_interval_frames: 5_000  # evaluate & record every N frames
-eval_episodes: 10             # number of greedy episodes per evaluation
+eval_interval_frames: 10_000  # evaluate & record every N frames
+eval_episodes: 5              # number of greedy episodes per evaluation
 log_interval_frames: 5_000    # tensorboard scalar logging interval

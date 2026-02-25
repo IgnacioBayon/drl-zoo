@@ -179,16 +179,15 @@ class PrioritizedReplayBuffer:
         min_prob = self._min.min / total
         max_weight = (self._size * min_prob) ** (-beta) if min_prob > 0 else 1.0
 
-        weights = np.empty(batch_size, dtype=np.float64)
-        for i in range(batch_size):
-            lo = segment * i
-            hi = segment * (i + 1)
-            s = np.random.uniform(lo, hi)
-            idx = self._sum.find_prefixsum_idx(s)
-            idx = min(idx, self._size - 1)
-            indices[i] = idx
-            prob = self._sum[idx] / total
-            weights[i] = (self._size * prob) ** (-beta) / max_weight
+        # Stratified sampling — generate all random prefix sums in one call
+        boundaries = np.arange(batch_size) * segment
+        prefix_sums = np.random.uniform(boundaries, boundaries + segment)
+        for i, s in enumerate(prefix_sums):
+            indices[i] = min(self._sum.find_prefixsum_idx(s), self._size - 1)
+
+        # Vectorised weight computation
+        probs = np.array([self._sum[int(idx)] for idx in indices]) / total
+        weights = (self._size * probs) ** (-beta) / max_weight
 
         batch = {
             "obs": self._obs[indices],
@@ -267,22 +266,19 @@ class NStepAccumulator:
         state, setting ``done=1.0`` only for true terminations.
         """
         num_envs = len(rewards)
+        # Batch-convert once instead of per-worker torch.as_tensor calls
+        obs_t = torch.as_tensor(obs)
+        act_t = torch.as_tensor(actions, dtype=torch.int64)
+        nxt_t = torch.as_tensor(next_obs)
         for i in range(num_envs):
-            self._fifos[i].append(
-                (
-                    torch.as_tensor(obs[i]),
-                    torch.as_tensor(actions[i], dtype=torch.int64),
-                    float(rewards[i]),
-                )
-            )
+            self._fifos[i].append((obs_t[i], act_t[i], float(rewards[i])))
 
             if terminations[i] or truncations[i]:
-                nxt = torch.as_tensor(next_obs[i])
                 is_term = float(terminations[i])  # 1.0 only if truly dead
                 while self._fifos[i]:
-                    self._flush_front(i, nxt, done=is_term)
+                    self._flush_front(i, nxt_t[i], done=is_term)
             elif len(self._fifos[i]) == self._n:
-                self._flush_front(i, torch.as_tensor(next_obs[i]), done=0.0)
+                self._flush_front(i, nxt_t[i], done=0.0)
 
     def _flush_front(self, worker: int, next_obs: torch.Tensor, done: float) -> None:
         fifo = self._fifos[worker]
@@ -398,9 +394,9 @@ def _train_step(
     batch, indices, weights = per_buffer.sample(batch_size, beta)
     weights = weights.to(device)
 
-    # Sample noise for NoisyNets
+    # Resample noise for the online network only; target noise is fixed
+    # between hard target copies for stability and performance.
     online.reset_noise()
-    target.reset_noise()
 
     losses = _c51_loss(online, target, batch, device)  # (B,)
     loss = (losses * weights).mean()
@@ -516,6 +512,7 @@ def _train_loop(
             != prev_step // tcfg.target_update_frames
         ):
             target.load_state_dict(online.state_dict())
+            target.reset_noise()  # fresh noise snapshot for the new target
 
         # -- periodic evaluation -----------------------------------------------
         eval_info: str | None = None
