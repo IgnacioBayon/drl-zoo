@@ -141,6 +141,7 @@ class DuelingHead(nn.Module):
         atoms: Number of atoms for the categorical distribution.
         hidden_dim: Hidden layer width inside each stream.
         sigma0: NoisyLinear initial sigma.
+        noisy: If ``True`` (default), use NoisyLinear; otherwise standard ``nn.Linear``.
     """
 
     def __init__(
@@ -150,18 +151,22 @@ class DuelingHead(nn.Module):
         atoms: int,
         hidden_dim: int,
         sigma0: float,
+        noisy: bool = True,
     ) -> None:
         super().__init__()
         self.action_bins = action_bins
         self.atoms = atoms
 
+        Linear = NoisyLinear if noisy else nn.Linear
+        extra = {"sigma0": sigma0} if noisy else {}
+
         # Value stream → (B, atoms)
-        self.v1 = NoisyLinear(latent_dim, hidden_dim, sigma0)
-        self.v2 = NoisyLinear(hidden_dim, atoms, sigma0)
+        self.v1 = Linear(latent_dim, hidden_dim, **extra)
+        self.v2 = Linear(hidden_dim, atoms, **extra)
 
         # Advantage stream → (B, action_bins * atoms)
-        self.a1 = NoisyLinear(latent_dim, hidden_dim, sigma0)
-        self.a2 = NoisyLinear(hidden_dim, action_bins * atoms, sigma0)
+        self.a1 = Linear(latent_dim, hidden_dim, **extra)
+        self.a2 = Linear(hidden_dim, action_bins * atoms, **extra)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """Returns ``(B, action_bins, atoms)`` logits."""
@@ -204,12 +209,14 @@ class RainbowDQN(nn.Module):
         vmax: float = 10.0,
         noisy_sigma0: float = 0.5,
         head_hidden_dim: int = 256,
+        noisy: bool = True,
         **kwargs: object,
     ) -> None:
         super().__init__()
         self.num_branches = num_branches
         self.action_bins = action_bins
         self.atoms = atoms
+        self.noisy = noisy
 
         self.encoder = Encoder(in_channels, in_resolution)
 
@@ -221,6 +228,7 @@ class RainbowDQN(nn.Module):
                     atoms,
                     head_hidden_dim,
                     noisy_sigma0,
+                    noisy=noisy,
                 )
                 for _ in range(num_branches)
             ]
@@ -240,7 +248,9 @@ class RainbowDQN(nn.Module):
         return {"logits": logits, "probs": probs, "q": q}
 
     def reset_noise(self) -> None:
-        """Resample noise for all NoisyLinear layers."""
+        """Resample noise for all NoisyLinear layers (no-op if ``noisy=False``)."""
+        if not self.noisy:
+            return
         for module in self.modules():
             if isinstance(module, NoisyLinear):
                 module.reset_noise()

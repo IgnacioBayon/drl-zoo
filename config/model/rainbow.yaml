@@ -12,7 +12,10 @@ atoms: 51
 vmin: -10.0
 vmax: 150.0
 
-# NoisyNet initial sigma
+# NoisyNet: set to false to use standard linear layers (pair with eps_greedy)
+noisy: ${is_equal:${train.exploration}, "noisy"} 
+
+# NoisyNet initial sigma (ignored when noisy == false)
 noisy_sigma0: 0.5
 
 # Dueling head hidden layer width

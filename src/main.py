@@ -3,7 +3,7 @@ import random
 import hydra
 import numpy as np
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from src.dqn.train_dqn import train_dqn
 from src.dqn.train_rainbow import train_rainbow
@@ -12,6 +12,9 @@ _TRAINERS = {
     "dqn": train_dqn,
     "rainbow": train_rainbow,
 }
+
+
+OmegaConf.register_new_resolver("is_equal", lambda val, target: val == target)
 
 
 @hydra.main(version_base="1.3", config_path="../config", config_name="config")

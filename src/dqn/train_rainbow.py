@@ -436,6 +436,8 @@ def _train_loop(
     total_frames = int(tcfg.total_frames)
     steps = math.ceil(total_frames / num_envs)
 
+    use_noisy: bool = str(tcfg.exploration) == "noisy"
+
     global_step = 0
     worker_returns = np.zeros(num_envs, dtype=np.float64)
     episode_returns: deque[float] = deque(maxlen=100)
@@ -443,6 +445,7 @@ def _train_loop(
     step_losses: list[torch.Tensor] = []
     avg_loss = 0.0
     best_mean_reward = float("-inf")
+    epsilon = 0.0  # only meaningful for eps_greedy
 
     beta_start: float = float(tcfg.per_beta_start)
     beta_frames: int = int(tcfg.per_beta_frames)
@@ -452,12 +455,33 @@ def _train_loop(
     start = perf_counter()
 
     for step in range(1, steps + 1):
-        # -- action selection (noisy nets — no ε-greedy) -----------------------
-        online.reset_noise()  # Resample noise for each action selection
-        with torch.no_grad():
-            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
-            q = online(obs_t)["q"]  # (num_envs, branches, bins)
-            actions = q.argmax(dim=-1).cpu().numpy()  # (num_envs, branches)
+        # -- action selection --------------------------------------------------
+        if use_noisy:
+            # NoisyNet exploration: resample noise, then act greedily
+            online.reset_noise()
+            with torch.no_grad():
+                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
+                q = online(obs_t)["q"]  # (num_envs, branches, bins)
+                actions = q.argmax(dim=-1).cpu().numpy()  # (num_envs, branches)
+        else:
+            # ε-greedy exploration with linear decay
+            frames_since_train = max(0, global_step - start_train_after)
+            epsilon = max(
+                tcfg.epsilon_end,
+                tcfg.epsilon_start
+                - (tcfg.epsilon_start - tcfg.epsilon_end)
+                * frames_since_train
+                / tcfg.epsilon_anneal_frames,
+            )
+            if np.random.rand() < epsilon:
+                actions = envs.action_space.sample()
+            else:
+                with torch.no_grad():
+                    obs_t = (
+                        torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
+                    )
+                    q = online(obs_t)["q"]  # (num_envs, branches, bins)
+                    actions = q.argmax(dim=-1).cpu().numpy()
 
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         dones = np.logical_or(terminations, truncations)
@@ -512,7 +536,8 @@ def _train_loop(
             != prev_step // tcfg.target_update_frames
         ):
             target.load_state_dict(online.state_dict())
-            target.reset_noise()  # fresh noise snapshot for the new target
+            if use_noisy:
+                target.reset_noise()  # fresh noise snapshot for the new target
 
         # -- periodic evaluation -----------------------------------------------
         eval_info: str | None = None
@@ -559,6 +584,8 @@ def _train_loop(
             writer.add_scalar("train/loss", avg_loss, global_step)
             writer.add_scalar("train/fps", fps, global_step)
             writer.add_scalar("train/buffer_size", len(per_buffer), global_step)
+            if not use_noisy:
+                writer.add_scalar("train/epsilon", epsilon, global_step)
             writer.add_scalar(
                 "train/beta",
                 beta_start
@@ -608,8 +635,15 @@ def train_rainbow(cfg: DictConfig) -> None:
     )
 
     # -- networks & optimiser --------------------------------------------------
-    online = instantiate(cfg.model, num_branches=num_branches).to(device)
-    target = instantiate(cfg.model, num_branches=num_branches).to(device)
+    # When using eps_greedy exploration, force noisy=False in the model
+    # so standard nn.Linear layers are used instead of NoisyLinear.
+    use_noisy = str(cfg.train.exploration) == "noisy"
+    online = instantiate(cfg.model, num_branches=num_branches, noisy=use_noisy).to(
+        device
+    )
+    target = instantiate(cfg.model, num_branches=num_branches, noisy=use_noisy).to(
+        device
+    )
     target.load_state_dict(online.state_dict())
 
     optimizer = torch.optim.Adam(online.parameters(), lr=cfg.train.lr, eps=1.5e-4)
@@ -638,7 +672,7 @@ def train_rainbow(cfg: DictConfig) -> None:
 
     log.info(
         "Training Rainbow DQN on %s | device=%s | envs=%d | buffer=%d | "
-        "branches=%d | atoms=%d | n_step=%d",
+        "branches=%d | atoms=%d | n_step=%d | exploration=%s",
         cfg.env.name,
         device,
         cfg.env.num_envs,
@@ -646,6 +680,7 @@ def train_rainbow(cfg: DictConfig) -> None:
         num_branches,
         cfg.model.atoms,
         cfg.train.n_step,
+        cfg.train.exploration,
     )
 
     elapsed, avg_fps = _train_loop(
