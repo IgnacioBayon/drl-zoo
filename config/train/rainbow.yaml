@@ -4,37 +4,37 @@ device: auto   # auto | cpu | cuda
 loss_fn: huber  # mse | huber
 
 # optimiser
-lr: 6.25e-4            # standard Rainbow lr (Hessel et al. 2017)
+lr: 1e-4            # standard Rainbow lr (Hessel et al. 2017)
 
 # RL
 gamma: 0.99
-total_frames: 2_000_000
+total_frames: 5_000_000
 
 # replay buffer
-buffer_size: 50_000
-batch_size: 32
-start_train_after: 50_000    # collect this many frames before the first gradient step
+buffer_size: 200_000
+batch_size: 64
+start_train_after: 20_000    # collect this many frames before the first gradient step
 
 # exploration: noisy | eps_greedy
 exploration: eps_greedy
 
 # epsilon-greedy params (only used when exploration == eps_greedy)
 epsilon_start: 1.0
-epsilon_end: 0.01
-epsilon_anneal_frames: 500_000
+epsilon_end: 0.05
+epsilon_anneal_frames: 1_000_000
 
 # network updates
-train_every: 4                # gradient step every N env frames
-target_update_frames: 32_000  # ~8k gradient steps between copies (standard Rainbow)
+train_every: 10                # gradient step every N env frames
+target_update_frames: 10_000  # ~8k gradient steps between copies (standard Rainbow)
 max_grad_norm: 10.0           # clip gradient L2 norm
 
 # Multi-step returns
 n_step: 3
 
 # Prioritized Experience Replay
-per_alpha: 0.5        # prioritisation exponent (0 = uniform)
+per_alpha: 0.6        # prioritisation exponent (0 = uniform)
 per_beta_start: 0.4    # initial IS-weight correction
-per_beta_frames: ${.total_frames}  # anneal β → 1.0 over this many frames
+per_beta_frames: 1_000_000  # anneal β → 1.0 over this many frames
 
 # logging / recording
 eval_interval_frames: 10_000  # evaluate & record every N frames

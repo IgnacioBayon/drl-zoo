@@ -2,10 +2,10 @@ defaults:
   - _self_
 
 name: "Hopper-v5"
-num_envs: 1
+num_envs: 30
 
 # observation
-train_resolution: [84, 84]
+train_resolution: [64, 64]
 full_resolution: [480, 480]
 use_luminance: true
 stack_size: 4
