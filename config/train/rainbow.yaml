@@ -1,8 +1,5 @@
 device: auto   # auto | cpu | cuda
 
-# loss
-loss_fn: huber  # mse | huber
-
 # optimiser
 lr: 1e-4            # standard Rainbow lr (Hessel et al. 2017)
 
@@ -16,7 +13,7 @@ batch_size: 64
 start_train_after: 20_000    # collect this many frames before the first gradient step
 
 # exploration: noisy | eps_greedy
-exploration: eps_greedy
+exploration: noisy
 
 # epsilon-greedy params (only used when exploration == eps_greedy)
 epsilon_start: 1.0

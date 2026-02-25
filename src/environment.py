@@ -26,17 +26,19 @@ class CustomReward(gym.Wrapper):
             pos_before = float(self.unwrapped.data.subtree_com[self._torso_id][0])
         else:
             pos_before = float(self.unwrapped.data.qpos[0])
-        obs, _, terminated, truncated, info = self.env.step(action)
+        obs, og_reward, terminated, truncated, info = self.env.step(action)
         if self._use_com:
             pos_after = float(self.unwrapped.data.subtree_com[self._torso_id][0])
         else:
             pos_after = float(self.unwrapped.data.qpos[0])
 
-        x_vel = (pos_after - pos_before) / self.unwrapped.dt
+        # x_vel = (pos_after - pos_before) / self.unwrapped.dt
+        x_vel = obs[6]
         # forward_reward = self.unwrapped._forward_reward_weight * x_vel
         forward_reward = (x_vel >= 0) * 1.0
         ctrl_cost = self.unwrapped._ctrl_cost_weight * float(np.sum(np.square(action)))
-        healthy_reward = self.unwrapped._healthy_reward if not terminated else 0.0
+        # healthy_reward = self.unwrapped._healthy_reward if not terminated else 0.0
+        healthy_reward = self.unwrapped._healthy_reward if og_reward > 0 else 0.0
 
         reward = forward_reward + healthy_reward - ctrl_cost
         info["reward_forward"] = forward_reward
@@ -93,6 +95,7 @@ def build_envs(
         "width": resolution[0],
         "height": resolution[1],
         "wrappers": [wrap_env],
+        "exclude_current_positions_from_observation": False,
         **env_kwargs,
     }
     # Remove num_envs and vectorization_mode for non-vectorized case

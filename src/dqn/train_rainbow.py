@@ -36,182 +36,107 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class SumSegmentTree:
-    """Binary segment tree storing prefix sums for O(log n) proportional sampling."""
-
-    def __init__(self, capacity: int) -> None:
-        self._cap = capacity
-        self._tree = np.zeros(2 * capacity, dtype=np.float64)
-
-    def __setitem__(self, idx: int, val: float) -> None:
-        idx += self._cap
-        self._tree[idx] = val
-        while idx > 1:
-            idx >>= 1
-            self._tree[idx] = self._tree[2 * idx] + self._tree[2 * idx + 1]
-
-    def __getitem__(self, idx: int) -> float:
-        return float(self._tree[idx + self._cap])
-
-    @property
-    def total(self) -> float:
-        return float(self._tree[1])
-
-    def find_prefixsum_idx(self, prefix_sum: float) -> int:
-        """Return the highest index *i* such that ``sum(tree[0:i]) <= prefix_sum``."""
-        idx = 1
-        while idx < self._cap:
-            left = 2 * idx
-            if self._tree[left] > prefix_sum:
-                idx = left
-            else:
-                prefix_sum -= self._tree[left]
-                idx = left + 1
-        return idx - self._cap
-
-
-class MinSegmentTree:
-    """Binary segment tree storing running minimums."""
-
-    def __init__(self, capacity: int) -> None:
-        self._cap = capacity
-        self._tree = np.full(2 * capacity, float("inf"), dtype=np.float64)
-
-    def __setitem__(self, idx: int, val: float) -> None:
-        idx += self._cap
-        self._tree[idx] = val
-        while idx > 1:
-            idx >>= 1
-            self._tree[idx] = min(self._tree[2 * idx], self._tree[2 * idx + 1])
-
-    @property
-    def min(self) -> float:
-        return float(self._tree[1])
-
-
-# ---------------------------------------------------------------------------
-# Prioritized Replay Buffer with n-step support
-# ---------------------------------------------------------------------------
-
-
 class PrioritizedReplayBuffer:
-    """Ring buffer with proportional PER and per-sample n-step discount storage.
-
-    Args:
-        capacity: Maximum number of transitions stored.
-        obs_shape: Observation tensor shape, e.g. ``(stack, H, W)``.
-        n_branches: Number of action branches.
-        alpha: PER prioritisation exponent (0 = uniform, 1 = full PER).
-    """
+    """Proportional PER with flat arrays."""
 
     def __init__(
-        self,
-        capacity: int,
-        obs_shape: tuple[int, ...],
-        n_branches: int,
-        alpha: float,
+        self, capacity: int, obs_shape: tuple[int, ...], num_branches: int, alpha: float
     ) -> None:
-        # Round capacity to next power-of-two for the segment trees
-        self._tree_cap = 1
-        while self._tree_cap < capacity:
-            self._tree_cap <<= 1
-
+        self.capacity = capacity
         self._alpha = alpha
-        self._max_priority = 1.0
-        self._sum = SumSegmentTree(self._tree_cap)
-        self._min = MinSegmentTree(self._tree_cap)
-
-        self._capacity = capacity
-        self._obs = torch.zeros((capacity, *obs_shape), dtype=torch.uint8)
-        self._next_obs = torch.zeros((capacity, *obs_shape), dtype=torch.uint8)
-        self._actions = torch.zeros((capacity, n_branches), dtype=torch.int64)
-        self._rewards = torch.zeros(capacity, dtype=torch.float32)
-        self._dones = torch.zeros(capacity, dtype=torch.float32)
-        self._gamma_ns = torch.zeros(capacity, dtype=torch.float32)
-
-        self._ptr = 0
+        self._pos = 0
         self._size = 0
 
-    # -- storage ---------------------------------------------------------------
-
-    def add(
-        self,
-        obs: torch.Tensor,
-        action: torch.Tensor,
-        reward: float,
-        next_obs: torch.Tensor,
-        done: float,
-        gamma_n: float,
-    ) -> None:
-        """Append one n-step transition with maximal priority."""
-        i = self._ptr
-        self._obs[i] = obs
-        self._next_obs[i] = next_obs
-        self._actions[i] = action
-        self._rewards[i] = reward
-        self._dones[i] = done
-        self._gamma_ns[i] = gamma_n
-
-        pa = self._max_priority**self._alpha
-        self._sum[i] = pa
-        self._min[i] = pa
-
-        self._ptr = (i + 1) % self._capacity
-        self._size = min(self._size + 1, self._capacity)
-
-    # -- sampling --------------------------------------------------------------
-
-    def sample(
-        self, batch_size: int, beta: float
-    ) -> tuple[dict[str, torch.Tensor], np.ndarray, torch.Tensor]:
-        """Stratified sampling proportional to stored priorities.
-
-        Returns:
-            batch: Dict of tensors (CPU).
-            indices: Array of sampled buffer indices for later priority updates.
-            weights: Importance-sampling weights ``(B,)``.
-        """
-        indices = np.empty(batch_size, dtype=np.int64)
-        total = self._sum.total
-        segment = total / batch_size
-
-        # Max IS weight for normalisation
-        min_prob = self._min.min / total
-        max_weight = (self._size * min_prob) ** (-beta) if min_prob > 0 else 1.0
-
-        # Stratified sampling — generate all random prefix sums in one call
-        boundaries = np.arange(batch_size) * segment
-        prefix_sums = np.random.uniform(boundaries, boundaries + segment)
-        for i, s in enumerate(prefix_sums):
-            indices[i] = min(self._sum.find_prefixsum_idx(s), self._size - 1)
-
-        # Vectorised weight computation
-        probs = np.array([self._sum[int(idx)] for idx in indices]) / total
-        weights = (self._size * probs) ** (-beta) / max_weight
-
-        batch = {
-            "obs": self._obs[indices],
-            "next_obs": self._next_obs[indices],
-            "actions": self._actions[indices],
-            "rewards": self._rewards[indices],
-            "dones": self._dones[indices],
-            "gamma_ns": self._gamma_ns[indices],
-        }
-        return batch, indices, torch.as_tensor(weights, dtype=torch.float32)
-
-    # -- priority update -------------------------------------------------------
-
-    def update_priorities(self, indices: np.ndarray, priorities: torch.Tensor) -> None:
-        """Set new priorities for previously sampled transitions."""
-        for idx, p in zip(indices, priorities.detach().cpu().numpy()):
-            p = max(float(p), 1e-8)
-            self._max_priority = max(self._max_priority, p)
-            pa = p**self._alpha
-            self._sum[int(idx)] = pa
-            self._min[int(idx)] = pa
+        self._obs = torch.empty((capacity, *obs_shape), dtype=torch.uint8)
+        self._next_obs = torch.empty((capacity, *obs_shape), dtype=torch.uint8)
+        self._actions = torch.empty((capacity, num_branches), dtype=torch.int64)
+        self._rewards = torch.empty((capacity,), dtype=torch.float32)
+        self._dones = torch.empty((capacity,), dtype=torch.float32)
+        self._gamma_ns = torch.empty((capacity,), dtype=torch.float32)
+        self._priorities = torch.empty((capacity,), dtype=torch.float32)
 
     def __len__(self) -> int:
         return self._size
+
+    def add_batch(
+        self,
+        obs: torch.Tensor,
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        next_obs: torch.Tensor,
+        dones: torch.Tensor,
+        gamma_ns: torch.Tensor,
+    ) -> None:
+        """Insert a batch of ``n`` transitions, handling circular wrap."""
+        n = obs.shape[0]
+        max_prio = (
+            self._priorities[: self._size].max().item() if self._size > 0 else 1.0
+        )
+
+        end = self._pos + n
+        if end <= self.capacity:
+            s = slice(self._pos, end)
+            self._obs[s].copy_(obs)
+            self._next_obs[s].copy_(next_obs)
+            self._actions[s].copy_(actions)
+            self._rewards[s].copy_(rewards)
+            self._dones[s].copy_(dones)
+            self._gamma_ns[s].copy_(gamma_ns)
+            self._priorities[s] = max_prio
+        else:
+            first = self.capacity - self._pos
+            self._obs[self._pos :].copy_(obs[:first])
+            self._next_obs[self._pos :].copy_(next_obs[:first])
+            self._actions[self._pos :].copy_(actions[:first])
+            self._rewards[self._pos :].copy_(rewards[:first])
+            self._dones[self._pos :].copy_(dones[:first])
+            self._gamma_ns[self._pos :].copy_(gamma_ns[:first])
+            self._priorities[self._pos :] = max_prio
+
+            rest = n - first
+            self._obs[:rest].copy_(obs[first:])
+            self._next_obs[:rest].copy_(next_obs[first:])
+            self._actions[:rest].copy_(actions[first:])
+            self._rewards[:rest].copy_(rewards[first:])
+            self._dones[:rest].copy_(dones[first:])
+            self._gamma_ns[:rest].copy_(gamma_ns[first:])
+            self._priorities[:rest] = max_prio
+
+        self._pos = end % self.capacity
+        self._size = min(self._size + n, self.capacity)
+
+    def sample(
+        self, batch_size: int, beta: float
+    ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        """Sample a batch weighted by priority."""
+        if self._size == 0:
+            raise ValueError("Cannot sample from an empty buffer.")
+        probs = self._priorities[: self._size].pow(self._alpha)
+        probs_sum = probs.sum().item()
+        if probs_sum == 0:
+            probs.fill_(1.0 / self._size)
+        else:
+            probs.div_(probs_sum)
+
+        indices = torch.multinomial(probs, batch_size, replacement=True)
+        weights = (self._size * probs[indices]).pow(-beta)
+        weights.div_(weights.max())
+
+        batch = {
+            "obs": self._obs[indices],
+            "actions": self._actions[indices],
+            "rewards": self._rewards[indices],
+            "next_obs": self._next_obs[indices],
+            "dones": self._dones[indices],
+            "gamma_ns": self._gamma_ns[indices],
+        }
+        return batch, indices, weights
+
+    def update_priorities(
+        self, indices: torch.Tensor, priorities: torch.Tensor
+    ) -> None:
+        """Set new priorities (clamped to a small ε) for sampled indices."""
+        self._priorities[indices] = priorities.cpu().clamp(min=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -219,20 +144,17 @@ class PrioritizedReplayBuffer:
 # ---------------------------------------------------------------------------
 
 
-class NStepAccumulator:
-    """Accumulates per-worker n-step transitions and flushes them into a PER buffer.
+class VectorizedNStepAccumulator:
+    """Accumulates per-worker n-step transitions.
 
-    For each vectorised environment worker, maintains a short FIFO of raw
-    ``(obs, action, reward)`` tuples.  When the FIFO reaches *n* entries (or
-    an episode terminates), the discounted n-step return is computed from the
-    first entry to the last, and the resulting transition is pushed into the
-    replay buffer.
+    Each parallel worker maintains a FIFO of ``(obs, action, reward)`` tuples.
+    When the FIFO reaches *n* entries a full n-step transition is emitted; when
+    an episode ends, all remaining partial transitions are flushed.
 
     Args:
         num_envs: Number of parallel environment workers.
         n_step: Lookahead horizon.
         gamma: Discount factor.
-        buffer: Target :class:`PrioritizedReplayBuffer` to push into.
     """
 
     def __init__(
@@ -240,14 +162,22 @@ class NStepAccumulator:
         num_envs: int,
         n_step: int,
         gamma: float,
-        buffer: PrioritizedReplayBuffer,
     ) -> None:
+        self._num_envs = num_envs
         self._n = n_step
         self._gamma = gamma
-        self._buf = buffer
-        self._fifos: list[list[tuple[torch.Tensor, torch.Tensor, float]]] = [
-            [] for _ in range(num_envs)
+        self._fifos: list[deque[tuple[np.ndarray, np.ndarray, float]]] = [
+            deque() for _ in range(num_envs)
         ]
+
+    def _discounted_return(
+        self, entries: list[tuple[np.ndarray, np.ndarray, float]]
+    ) -> float:
+        """Compute discounted return ``r_0 + γ·r_1 + … + γ^{k-1}·r_{k-1}``."""
+        R = 0.0
+        for _, _, r in reversed(entries):
+            R = r + self._gamma * R
+        return R
 
     def append(
         self,
@@ -257,38 +187,65 @@ class NStepAccumulator:
         next_obs: np.ndarray,
         terminations: np.ndarray,
         truncations: np.ndarray,
-    ) -> None:
-        """Process one vectorised step and flush completed n-step transitions.
+    ) -> dict[str, torch.Tensor] | None:
+        """Process one vectorised env step and return completed transitions.
 
-        With gymnasium 1.2+ ``AutoresetMode.NEXT_STEP``, ``next_obs[i]`` is
-        the **final** observation when ``dones[i]=True`` (reset happens on
-        the *next* call to ``step``).  We use it directly as the bootstrap
-        state, setting ``done=1.0`` only for true terminations.
+        Returns:
+            A dict of batched tensors ``{obs, actions, rewards, next_obs,
+            dones, gamma_ns}`` for every transition that became ready this
+            step, or ``None`` when no transition is complete yet.
         """
-        num_envs = len(rewards)
-        # Batch-convert once instead of per-worker torch.as_tensor calls
-        obs_t = torch.as_tensor(obs)
-        act_t = torch.as_tensor(actions, dtype=torch.int64)
-        nxt_t = torch.as_tensor(next_obs)
-        for i in range(num_envs):
-            self._fifos[i].append((obs_t[i], act_t[i], float(rewards[i])))
+        dones = np.logical_or(terminations, truncations)
 
-            if terminations[i] or truncations[i]:
-                is_term = float(terminations[i])  # 1.0 only if truly dead
-                while self._fifos[i]:
-                    self._flush_front(i, nxt_t[i], done=is_term)
-            elif len(self._fifos[i]) == self._n:
-                self._flush_front(i, nxt_t[i], done=0.0)
+        out_obs: list[np.ndarray] = []
+        out_act: list[np.ndarray] = []
+        out_rew: list[float] = []
+        out_nxt: list[np.ndarray] = []
+        out_done: list[float] = []
+        out_gn: list[float] = []
 
-    def _flush_front(self, worker: int, next_obs: torch.Tensor, done: float) -> None:
-        fifo = self._fifos[worker]
-        k = len(fifo)
-        R = 0.0
-        for j in range(k - 1, -1, -1):
-            R = fifo[j][2] + self._gamma * R
-        first_obs, first_action, _ = fifo[0]
-        self._buf.add(first_obs, first_action, R, next_obs, done, self._gamma**k)
-        fifo.pop(0)
+        for i in range(self._num_envs):
+            fifo = self._fifos[i]
+            fifo.append((obs[i], actions[i], float(rewards[i])))
+
+            if dones[i]:
+                # Episode ended — flush every remaining FIFO entry as a
+                # partial (or full) n-step transition.
+                entries = list(fifo)
+                K = len(entries)
+                for j in range(K):
+                    out_obs.append(entries[j][0])
+                    out_act.append(entries[j][1])
+                    out_rew.append(self._discounted_return(entries[j:]))
+                    out_nxt.append(next_obs[i])
+                    # Truncation should still bootstrap; only true
+                    # termination zeroes out the target value.
+                    out_done.append(float(terminations[i]))
+                    out_gn.append(self._gamma ** (K - j))
+                fifo.clear()
+
+            elif len(fifo) == self._n:
+                # Full n-step window — emit the oldest transition.
+                entries = list(fifo)
+                out_obs.append(entries[0][0])
+                out_act.append(entries[0][1])
+                out_rew.append(self._discounted_return(entries))
+                out_nxt.append(next_obs[i])
+                out_done.append(0.0)
+                out_gn.append(self._gamma**self._n)
+                fifo.popleft()
+
+        if not out_obs:
+            return None
+
+        return {
+            "obs": torch.as_tensor(np.stack(out_obs), dtype=torch.uint8),
+            "actions": torch.as_tensor(np.stack(out_act), dtype=torch.int64),
+            "rewards": torch.tensor(out_rew, dtype=torch.float32),
+            "next_obs": torch.as_tensor(np.stack(out_nxt), dtype=torch.uint8),
+            "dones": torch.tensor(out_done, dtype=torch.float32),
+            "gamma_ns": torch.tensor(out_gn, dtype=torch.float32),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -394,10 +351,6 @@ def _train_step(
     batch, indices, weights = per_buffer.sample(batch_size, beta)
     weights = weights.to(device)
 
-    # Resample noise for the online network only; target noise is fixed
-    # between hard target copies for stability and performance.
-    online.reset_noise()
-
     losses = _c51_loss(online, target, batch, device)  # (B,)
     loss = (losses * weights).mean()
 
@@ -424,7 +377,7 @@ def _train_loop(
     target: RainbowDQN,
     optimizer: torch.optim.Optimizer,
     per_buffer: PrioritizedReplayBuffer,
-    n_step_acc: NStepAccumulator,
+    n_step_acc: VectorizedNStepAccumulator,
     device: torch.device,
     writer: SummaryWriter,
 ) -> tuple[float, float]:
@@ -432,11 +385,10 @@ def _train_loop(
     tcfg = cfg.train
     ecfg = cfg.env
     num_envs: int = ecfg.num_envs
+    multidiscrete: bool = ecfg.action_multidiscrete
 
     total_frames = int(tcfg.total_frames)
     steps = math.ceil(total_frames / num_envs)
-
-    use_noisy: bool = str(tcfg.exploration) == "noisy"
 
     global_step = 0
     worker_returns = np.zeros(num_envs, dtype=np.float64)
@@ -447,6 +399,7 @@ def _train_loop(
     best_mean_reward = float("-inf")
     epsilon = 0.0  # only meaningful for eps_greedy
 
+    use_noisy: bool = bool(tcfg.exploration == "noisy")
     beta_start: float = float(tcfg.per_beta_start)
     beta_frames: int = int(tcfg.per_beta_frames)
     start_train_after: int = int(tcfg.start_train_after)
@@ -459,6 +412,7 @@ def _train_loop(
         if use_noisy:
             # NoisyNet exploration: resample noise, then act greedily
             online.reset_noise()
+            target.reset_noise()
             with torch.no_grad():
                 obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
                 q = online(obs_t)["q"]  # (num_envs, branches, bins)
@@ -475,6 +429,8 @@ def _train_loop(
             )
             if np.random.rand() < epsilon:
                 actions = envs.action_space.sample()
+                if not multidiscrete:
+                    actions = actions[:, np.newaxis]  # (E,) → (E, 1)
             else:
                 with torch.no_grad():
                     obs_t = (
@@ -483,7 +439,9 @@ def _train_loop(
                     q = online(obs_t)["q"]  # (num_envs, branches, bins)
                     actions = q.argmax(dim=-1).cpu().numpy()
 
-        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        # Env expects (E,) scalars for Discrete, (E, branches) for MultiDiscrete
+        actions_env = actions if multidiscrete else actions.squeeze(-1)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions_env)
         dones = np.logical_or(terminations, truncations)
 
         # -- per-worker return tracking ----------------------------------------
@@ -497,7 +455,18 @@ def _train_loop(
             worker_returns[i] = 0.0
 
         # -- n-step accumulation → PER buffer ----------------------------------
-        n_step_acc.append(obs, actions, rewards, next_obs, terminations, truncations)
+        transitions = n_step_acc.append(
+            obs, actions, rewards, next_obs, terminations, truncations
+        )
+        if transitions is not None:
+            per_buffer.add_batch(
+                transitions["obs"],
+                transitions["actions"],
+                transitions["rewards"],
+                transitions["next_obs"],
+                transitions["dones"],
+                transitions["gamma_ns"],
+            )
 
         obs = next_obs
         prev_step = global_step
@@ -536,8 +505,6 @@ def _train_loop(
             != prev_step // tcfg.target_update_frames
         ):
             target.load_state_dict(online.state_dict())
-            if use_noisy:
-                target.reset_noise()  # fresh noise snapshot for the new target
 
         # -- periodic evaluation -----------------------------------------------
         eval_info: str | None = None
@@ -546,8 +513,9 @@ def _train_loop(
             != prev_step // tcfg.eval_interval_frames
         ):
 
-            def action_fn(obs_t: torch.Tensor) -> np.ndarray:
-                return online(obs_t)["q"].argmax(dim=-1).squeeze(0).cpu().numpy()
+            def action_fn(obs_t: torch.Tensor) -> np.ndarray | int:
+                act = online(obs_t)["q"].argmax(dim=-1).squeeze(0).cpu().numpy()
+                return act if multidiscrete else int(act.item())
 
             mean_r, std_r, max_r, _ = evaluate_and_record(
                 online,
@@ -628,23 +596,23 @@ def train_rainbow(cfg: DictConfig) -> None:
 
     # -- environment -----------------------------------------------------------
     envs = build_from_config(cfg.env, mode="train")
-    num_branches: int = (
-        envs.single_action_space.shape[0]
-        if hasattr(envs.single_action_space, "nvec")
-        else 1
-    )
+    multidiscrete: bool = cfg.env.action_multidiscrete
+    if multidiscrete:
+        num_branches = envs.single_action_space.shape[0]
+        action_bins = int(cfg.env.action_bins)
+    else:
+        num_branches = 1
+        action_bins = int(envs.single_action_space.n)  # bins ** num_joints
 
-    # -- networks & optimiser --------------------------------------------------
-    # When using eps_greedy exploration, force noisy=False in the model
-    # so standard nn.Linear layers are used instead of NoisyLinear.
-    use_noisy = str(cfg.train.exploration) == "noisy"
-    online = instantiate(cfg.model, num_branches=num_branches, noisy=use_noisy).to(
-        device
-    )
-    target = instantiate(cfg.model, num_branches=num_branches, noisy=use_noisy).to(
-        device
-    )
+    # -- networks & optimiser -------------------------------------------------
+    online = instantiate(
+        cfg.model, num_branches=num_branches, action_bins=action_bins
+    ).to(device)
+    target = instantiate(
+        cfg.model, num_branches=num_branches, action_bins=action_bins
+    ).to(device)
     target.load_state_dict(online.state_dict())
+    target.eval()  # target net is not trained, only updated via hard copies
 
     optimizer = torch.optim.Adam(online.parameters(), lr=cfg.train.lr, eps=1.5e-4)
 
@@ -656,15 +624,14 @@ def train_rainbow(cfg: DictConfig) -> None:
     per_buffer = PrioritizedReplayBuffer(
         capacity=int(cfg.train.buffer_size),
         obs_shape=obs_shape,
-        n_branches=num_branches,
+        num_branches=num_branches,
         alpha=float(cfg.train.per_alpha),
     )
 
-    n_step_acc = NStepAccumulator(
+    n_step_acc = VectorizedNStepAccumulator(
         num_envs=cfg.env.num_envs,
         n_step=int(cfg.train.n_step),
         gamma=float(cfg.train.gamma),
-        buffer=per_buffer,
     )
 
     # -- TensorBoard -----------------------------------------------------------

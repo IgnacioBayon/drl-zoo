@@ -99,6 +99,7 @@ def _train_loop(
     tcfg = cfg.train
     ecfg = cfg.env
     num_envs: int = ecfg.num_envs
+    multidiscrete: bool = ecfg.action_multidiscrete
 
     total_frames = int(tcfg.total_frames)
     steps = math.ceil(total_frames / num_envs)
@@ -134,12 +135,16 @@ def _train_loop(
         )
         if np.random.rand() < epsilon:
             actions = envs.action_space.sample()
+            if not multidiscrete:
+                actions = actions[:, np.newaxis]  # (E,) → (E, 1)
         else:
             with torch.no_grad():
                 obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
                 actions = policy(obs_t).argmax(dim=2).cpu().numpy()
 
-        next_obs, rewards, terminations, truncations, _ = envs.step(actions)
+        # Env expects (E,) scalars for Discrete, (E, branches) for MultiDiscrete
+        actions_env = actions if multidiscrete else actions.squeeze(-1)
+        next_obs, rewards, terminations, truncations, _ = envs.step(actions_env)
         dones = np.logical_or(terminations, truncations)
 
         # -- per-worker return accumulation ------------------------------------
@@ -208,8 +213,9 @@ def _train_loop(
             != prev_step // tcfg.eval_interval_frames
         ):
 
-            def action_fn(obs_t: torch.Tensor) -> np.ndarray:
-                return policy(obs_t).argmax(dim=2).squeeze(0).cpu().numpy()
+            def action_fn(obs_t: torch.Tensor) -> np.ndarray | int:
+                act = policy(obs_t).argmax(dim=2).squeeze(0).cpu().numpy()
+                return act if multidiscrete else int(act.item())
 
             mean_r, std_r, max_r, _ = evaluate_and_record(
                 policy,
@@ -290,15 +296,21 @@ def train_dqn(cfg: DictConfig) -> None:
 
     # -- environment -----------------------------------------------------------
     envs = build_from_config(cfg.env, mode="train")
-    num_branches: int = (
-        envs.single_action_space.shape[0]
-        if hasattr(envs.single_action_space, "nvec")
-        else 1
-    )
+    multidiscrete: bool = cfg.env.action_multidiscrete
+    if multidiscrete:
+        num_branches = envs.single_action_space.shape[0]
+        action_bins = int(cfg.env.action_bins)
+    else:
+        num_branches = 1
+        action_bins = int(envs.single_action_space.n)  # bins ** num_joints
 
     # -- networks & optimiser --------------------------------------------------
-    policy = instantiate(cfg.model, num_branches=num_branches).to(device)
-    target_policy = instantiate(cfg.model, num_branches=num_branches).to(device)
+    policy = instantiate(
+        cfg.model, num_branches=num_branches, action_bins=action_bins
+    ).to(device)
+    target_policy = instantiate(
+        cfg.model, num_branches=num_branches, action_bins=action_bins
+    ).to(device)
     target_policy.load_state_dict(policy.state_dict())
 
     loss_fn = get_loss_fn(cfg.train.loss_fn)

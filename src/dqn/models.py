@@ -14,16 +14,14 @@ import torch.nn.functional as F
 class Encoder(nn.Module):
     """CNN encoder shared between DQN and Rainbow for fair comparison.
 
-    Architecture: 3-layer CNN (Nature DQN) → flatten → FC 512.
-
     Args:
         in_channels: Number of input channels (typically ``stack_size``).
         in_resolution: Spatial resolution ``(H, W)`` of each frame.
     """
 
-    OUT_FEATURES: int = 512
+    OUT_FEATURES: int = 64 * 7 * 7  # 3136
 
-    def __init__(self, in_channels: int, in_resolution: tuple[int, ...]) -> None:
+    def __init__(self, in_channels: int) -> None:
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, 32, 8, stride=4),
@@ -32,14 +30,11 @@ class Encoder(nn.Module):
             nn.ReLU(),
             nn.Conv2d(64, 64, 3, stride=1),
             nn.ReLU(),
-            nn.Flatten(),
+            nn.AdaptiveAvgPool2d((7, 7)),
         )
-        with torch.no_grad():
-            conv_out = self.conv(torch.zeros(1, in_channels, *in_resolution)).shape[1]
-        self.fc = nn.Sequential(nn.Linear(conv_out, self.OUT_FEATURES), nn.ReLU())
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc(self.conv(x))
+        return self.conv(x).view(x.size(0), -1)  # (B, OUT_FEATURES)
 
 
 # ---------------------------------------------------------------------------
@@ -48,11 +43,11 @@ class Encoder(nn.Module):
 
 
 class DQNetwork(nn.Module):
-    """Branching DQN: shared encoder → one linear head per action branch.
+    """Branching DQN: shared encoder → hidden FC → one linear head per action branch.
 
     Args:
         in_channels: Number of stacked frames.
-        in_resolution: ``(H, W)`` spatial resolution.
+        in_resolution: ``(H, W)`` spatial resolution (unused, kept for config compat).
         action_bins: Discrete bins per action dimension.
         num_branches: Number of independent action dimensions.
     """
@@ -68,12 +63,16 @@ class DQNetwork(nn.Module):
         super().__init__()
         self.num_branches = num_branches
         self.action_bins = action_bins
-        self.encoder = Encoder(in_channels, in_resolution)
-        self.branches = nn.Linear(Encoder.OUT_FEATURES, num_branches * action_bins)
+        self.encoder = Encoder(in_channels)
+        self.fc = nn.Sequential(
+            nn.Linear(self.encoder.OUT_FEATURES, 512),
+            nn.ReLU(),
+        )
+        self.branches = nn.Linear(512, num_branches * action_bins)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Returns Q-values of shape ``(B, branches, bins)``."""
-        z = self.encoder(x)
+        z = self.fc(self.encoder(x))
         return self.branches(z).view(-1, self.num_branches, self.action_bins)
 
 
@@ -218,7 +217,7 @@ class RainbowDQN(nn.Module):
         self.atoms = atoms
         self.noisy = noisy
 
-        self.encoder = Encoder(in_channels, in_resolution)
+        self.encoder = Encoder(in_channels)
 
         self.heads = nn.ModuleList(
             [
