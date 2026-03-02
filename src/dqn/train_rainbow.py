@@ -392,8 +392,13 @@ def _train_loop(
 
     global_step = 0
     worker_returns = np.zeros(num_envs, dtype=np.float64)
+    worker_forward = np.zeros(num_envs, dtype=np.float64)
+    worker_ctrl = np.zeros(num_envs, dtype=np.float64)
+    worker_healthy = np.zeros(num_envs, dtype=np.float64)
+    worker_steps = np.zeros(num_envs, dtype=np.int64)
     episode_returns: deque[float] = deque(maxlen=100)
     reward_window_sum = 0.0
+    episodes_logged = 0
     step_losses: list[torch.Tensor] = []
     avg_loss = 0.0
     best_mean_reward = float("-inf")
@@ -446,13 +451,37 @@ def _train_loop(
 
         # -- per-worker return tracking ----------------------------------------
         worker_returns += rewards.astype(np.float64)
+        worker_steps += 1
+        if "reward_forward" in infos:
+            worker_forward += np.asarray(infos["reward_forward"], dtype=np.float64)
+        if "reward_ctrl" in infos:
+            worker_ctrl += np.asarray(infos["reward_ctrl"], dtype=np.float64)
+        if "reward_healthy" in infos:
+            worker_healthy += np.asarray(infos["reward_healthy"], dtype=np.float64)
+
         for i in np.where(dones)[0]:
             if len(episode_returns) == episode_returns.maxlen:
                 reward_window_sum -= episode_returns[0]
             ret = float(worker_returns[i])
             reward_window_sum += ret
             episode_returns.append(ret)
+
+            writer.add_scalar("episode/reward", ret, episodes_logged)
+            writer.add_scalar("episode/steps", int(worker_steps[i]), episodes_logged)
+            writer.add_scalar(
+                "episode/reward_forward", worker_forward[i], episodes_logged
+            )
+            writer.add_scalar("episode/reward_ctrl", worker_ctrl[i], episodes_logged)
+            writer.add_scalar(
+                "episode/reward_healthy", worker_healthy[i], episodes_logged
+            )
+            episodes_logged += 1
+
             worker_returns[i] = 0.0
+            worker_forward[i] = 0.0
+            worker_ctrl[i] = 0.0
+            worker_healthy[i] = 0.0
+            worker_steps[i] = 0
 
         # -- n-step accumulation → PER buffer ----------------------------------
         transitions = n_step_acc.append(

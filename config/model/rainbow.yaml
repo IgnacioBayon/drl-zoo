@@ -19,4 +19,4 @@ noisy: ${is_equal:${train.exploration}, "noisy"}
 noisy_sigma0: 0.5
 
 # Dueling head hidden layer width
-head_hidden_dim: 256
+head_hidden_dim: 512

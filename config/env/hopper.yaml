@@ -17,7 +17,7 @@ action_multidiscrete: false   # branching DQN
 # reward shaping
 use_com_reward: false
 forward_reward_weight: 1.0  # Default is 1.0
-healthy_reward: 0.01         # Default is 1.0
+healthy_reward: 1.0          # Default is 1.0
 ctrl_cost_weight: 0.0     # Default is 0.001.
 
 # env-specific init
