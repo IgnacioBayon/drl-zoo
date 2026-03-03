@@ -14,7 +14,7 @@ action_multidiscrete: false   # branching DQN
 
 # reward shaping
 use_com_reward: false
-forward_reward_weight: 1.0  # Default is 1.0
+forward_reward_weight: 0.2  # Default is 1.0
 healthy_reward: 1.0          # Default is 1.0
 ctrl_cost_weight: 0.0     # Default is 0.001.
 
@@ -24,5 +24,5 @@ healthy_angle_range: [-0.2, 0.2]  # Default is [-0.2, 0.2]
 reset_noise_scale: 0.005          # Default is 0.005
 max_episode_steps: 10000           # ~30s of sim time (dt=0.008) and 2m or real time
 
-# xml_file: null
-xml_file: ".venv/Lib/site-packages/gymnasium/envs/mujoco/assets/hopper.xml"
+xml_file: null
+# xml_file: ".venv/Lib/site-packages/gymnasium/envs/mujoco/assets/hopper.xml"

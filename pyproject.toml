@@ -15,6 +15,7 @@ dependencies = [
     "torchvision>=0.15.0",
     "tqdm>=4.67.3",
     "setuptools<82",
+    "opencv-python>=4.13.0.92",
 ]
 
 [[tool.uv.index]]

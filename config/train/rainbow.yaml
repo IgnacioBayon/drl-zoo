@@ -5,7 +5,7 @@ lr: 1e-4            # standard Rainbow lr (Hessel et al. 2017)
 
 # RL
 gamma: 0.99
-total_frames: 5_000_000
+total_frames: 10_000_000
 
 # replay buffer
 buffer_size: 200_000

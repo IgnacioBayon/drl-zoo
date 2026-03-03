@@ -120,12 +120,12 @@ class CustomReward(gym.Wrapper):
         else:
             pos_after = float(self.unwrapped.data.qpos[0])
 
-        # x_vel = obs[6]
-        # forward_reward = (x_vel >= 0) * 1.0
-        # healthy_reward = self.unwrapped._healthy_reward if og_reward > 0 else 0.0
-        x_vel = (pos_after - pos_before) / self.unwrapped.dt
-        forward_reward = self.unwrapped._forward_reward_weight * x_vel
-        healthy_reward = self.unwrapped._healthy_reward if not terminated else 0.0
+        x_vel = obs[6]
+        forward_reward = (x_vel >= 0) * 1.0
+        healthy_reward = self.unwrapped._healthy_reward if og_reward > 0 else 0.0
+        #x_vel = (pos_after - pos_before) / self.unwrapped.dt
+        #forward_reward = self.unwrapped._forward_reward_weight * x_vel
+        #healthy_reward = self.unwrapped._healthy_reward if not terminated else 0.0
         ctrl_cost = self.unwrapped._ctrl_cost_weight * float(np.sum(np.square(action)))
 
         reward = forward_reward + healthy_reward - ctrl_cost
