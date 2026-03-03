@@ -123,9 +123,9 @@ class CustomReward(gym.Wrapper):
         x_vel = obs[6]
         forward_reward = (x_vel >= 0) * 1.0
         healthy_reward = self.unwrapped._healthy_reward if og_reward > 0 else 0.0
-        #x_vel = (pos_after - pos_before) / self.unwrapped.dt
-        #forward_reward = self.unwrapped._forward_reward_weight * x_vel
-        #healthy_reward = self.unwrapped._healthy_reward if not terminated else 0.0
+        # x_vel = (pos_after - pos_before) / self.unwrapped.dt
+        # forward_reward = self.unwrapped._forward_reward_weight * x_vel
+        # healthy_reward = self.unwrapped._healthy_reward if not terminated else 0.0
         ctrl_cost = self.unwrapped._ctrl_cost_weight * float(np.sum(np.square(action)))
 
         reward = forward_reward + healthy_reward - ctrl_cost
@@ -157,3 +157,34 @@ class ImageObsWrapper(gym.ObservationWrapper):
             frame, (self._obs_size, self._obs_size), interpolation=cv2.INTER_AREA
         )
         return cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+
+
+class SmoothHopperWrapper(gym.RewardWrapper):
+    def __init__(self, env, target_velocity=1.0):
+        super().__init__(env)
+        self.target_velocity = target_velocity
+        self.last_action = np.zeros(env.action_space.shape)
+
+    def reward(self, reward):
+        # Extract terms from the original info if available, or re-calculate
+        # Note: Standard Hopper reward = forward_reward + healthy_reward - ctrl_cost
+
+        # 1. Speed: Change linear reward to a target-tracking reward for stability
+        # (Original reward maximizes velocity -> instability. This encourages a specific fast speed.)
+        velocity = self.env.unwrapped.data.qvel[0]
+        velocity_reward = np.exp(-np.square(velocity - self.target_velocity))
+
+        # 2. Smoothness: Penalize the difference between consecutive actions (Action Rate)
+        # This is the key missing component in standard Hopper for "smooth" motion.
+        current_action = self.env.unwrapped.data.ctrl.copy()
+        action_smoothness_penalty = np.sum(np.square(current_action - self.last_action))
+        self.last_action = current_action
+
+        # Combine: Keep healthy reward (usually ~1.0) + Velocity - Smoothness
+        new_reward = (
+            self.env.unwrapped._healthy_reward
+            + (self.env.unwrapped._forward_reward_weight * velocity_reward)
+            - (self.env.unwrapped._ctrl_cost_weight * action_smoothness_penalty)
+        )
+
+        return new_reward

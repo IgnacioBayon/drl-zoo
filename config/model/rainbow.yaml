@@ -9,7 +9,7 @@ num_branches: ???          # filled at runtime from env action space
 # C51 distributional support
 atoms: 51
 vmin: -10.0
-vmax: 150.0
+vmax: 600.0
 
 # NoisyNet: set to false to use standard linear layers (pair with eps_greedy)
 noisy: ${is_equal:${train.exploration}, "noisy"} 

@@ -115,7 +115,6 @@ def _train_loop(
     # Accumulate detached loss tensors between log events; sync once per interval.
     step_losses: list[torch.Tensor] = []
     avg_loss = 0.0
-    best_mean_reward = float("-inf")
 
     obs, _ = envs.reset(seed=int(cfg.seed))
     start = perf_counter()
@@ -217,7 +216,7 @@ def _train_loop(
                 act = policy(obs_t).argmax(dim=2).squeeze(0).cpu().numpy()
                 return act if multidiscrete else int(act.item())
 
-            mean_r, std_r, max_r, _ = evaluate_and_record(
+            mean_r, std_r, mean_fx = evaluate_and_record(
                 policy,
                 action_fn,
                 global_step,
@@ -226,20 +225,15 @@ def _train_loop(
                 device,
                 writer,
                 tcfg.eval_episodes,
-                best_mean_reward,
             )
-            eval_info = f"eval {mean_r:.2f}±{std_r:.2f} (max {max_r:.2f})"
-
-            # Save a checkpoint whenever we achieve a new best mean reward.
-            if mean_r > best_mean_reward:
-                best_mean_reward = mean_r
-                save_checkpoint(
-                    policy,
-                    optimizer,
-                    global_step,
-                    cfg.paths.checkpoint_dir,
-                    name=f"ckpt_best_mean_reward_{mean_r:.2f}.pt",
-                )
+            eval_info = f"eval {mean_r:.2f}±{std_r:.2f}"
+            save_checkpoint(
+                policy,
+                optimizer,
+                global_step,
+                cfg.paths.checkpoint_dir,
+                name=f"ckpt_{global_step}.pt",
+            )
 
         # -- tensorboard logging -----------------------------------------------
         if (

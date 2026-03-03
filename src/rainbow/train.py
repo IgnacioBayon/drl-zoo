@@ -171,15 +171,11 @@ def _train_loop(
 
     global_step = 0
     worker_returns = np.zeros(num_envs, dtype=np.float64)
-    worker_forward = np.zeros(num_envs, dtype=np.float64)
-    worker_ctrl = np.zeros(num_envs, dtype=np.float64)
-    worker_healthy = np.zeros(num_envs, dtype=np.float64)
     worker_steps = np.zeros(num_envs, dtype=np.int64)
     episode_returns: deque[float] = deque(maxlen=100)
     reward_window_sum = 0.0
     step_losses: list[torch.Tensor] = []
     avg_loss = 0.0
-    best_mean_reward = float("-inf")
     epsilon = 0.0  # only meaningful for eps_greedy
 
     use_noisy: bool = bool(tcfg.exploration == "noisy")
@@ -228,12 +224,6 @@ def _train_loop(
         # -- per-worker return tracking ----------------------------------------
         worker_returns += rewards.astype(np.float64)
         worker_steps += 1
-        if "reward_forward" in infos:
-            worker_forward += np.asarray(infos["reward_forward"], dtype=np.float64)
-        if "reward_ctrl" in infos:
-            worker_ctrl += np.asarray(infos["reward_ctrl"], dtype=np.float64)
-        if "reward_healthy" in infos:
-            worker_healthy += np.asarray(infos["reward_healthy"], dtype=np.float64)
 
         for i in np.where(dones)[0]:
             if len(episode_returns) == episode_returns.maxlen:
@@ -243,15 +233,14 @@ def _train_loop(
             episode_returns.append(ret)
 
             writer.add_scalar("episode/reward", ret, global_step)
-            writer.add_scalar("episode/steps", int(worker_steps[i]), global_step)
-            writer.add_scalar("episode/reward_forward", worker_forward[i], global_step)
-            writer.add_scalar("episode/reward_ctrl", worker_ctrl[i], global_step)
-            writer.add_scalar("episode/reward_healthy", worker_healthy[i], global_step)
+            fi = (infos.get("final_info") or [None] * num_envs)[i]
+            final_x = float(fi["x_position"]) if fi and "x_position" in fi else 0.0
+            writer.add_scalar("episode/final_x", final_x, global_step)
+            ep_time = int(worker_steps[i]) * 0.008  # dt = 0.008
+            avg_speed = final_x / ep_time if ep_time > 0 else 0.0
+            writer.add_scalar("episode/avg_speed", avg_speed, global_step)
 
             worker_returns[i] = 0.0
-            worker_forward[i] = 0.0
-            worker_ctrl[i] = 0.0
-            worker_healthy[i] = 0.0
             worker_steps[i] = 0
 
         # -- n-step accumulation -> PER buffer ----------------------------------
@@ -305,7 +294,7 @@ def _train_loop(
         ):
             target.load_state_dict(online.state_dict())
 
-        # -- periodic evaluation -----------------------------------------------
+        # -- periodic evaluation & checkpoint ----------------------------------
         eval_info: str | None = None
         if (
             global_step // tcfg.eval_interval_frames
@@ -316,7 +305,7 @@ def _train_loop(
                 act = online(obs_t)["q"].argmax(dim=-1).squeeze(0).cpu().numpy()
                 return act if multidiscrete else int(act.item())
 
-            mean_r, std_r, max_r, _ = evaluate_and_record(
+            mean_r, std_r, mean_fx = evaluate_and_record(
                 online,
                 action_fn,
                 global_step,
@@ -325,18 +314,15 @@ def _train_loop(
                 device,
                 writer,
                 tcfg.eval_episodes,
-                best_mean_reward,
             )
-            eval_info = f"eval {mean_r:.2f}+/-{std_r:.2f} (max {max_r:.2f})"
-            if mean_r > best_mean_reward:
-                best_mean_reward = mean_r
-                save_checkpoint(
-                    online,
-                    optimizer,
-                    global_step,
-                    cfg.paths.checkpoint_dir,
-                    name=f"ckpt_best_mean_reward_{mean_r:.2f}.pt",
-                )
+            eval_info = f"eval {mean_r:.2f}+/-{std_r:.2f}"
+            save_checkpoint(
+                online,
+                optimizer,
+                global_step,
+                cfg.paths.checkpoint_dir,
+                name=f"ckpt_{global_step}.pt",
+            )
 
         # -- tensorboard / console logging -------------------------------------
         if (

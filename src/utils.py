@@ -83,19 +83,15 @@ def run_eval_episode(
     record: bool = False,
     seed: int | None = None,
     env: object | None = None,
-) -> tuple[float, float, float, list[np.ndarray]]:
+) -> tuple[float, float, int, list[np.ndarray]]:
     """Run one greedy episode and optionally capture full-resolution frames.
-
-    Recording grabs 480×480 RGB frames via ``env.render()`` (the
-    underlying MuJoCo renderer) each step.  The agent still receives the
-    downscaled grayscale observations produced by ``ImageObsWrapper``.
 
     Args:
         env: Optional pre-built eval env to reuse. When provided the env
             is **not** closed on return — the caller owns its lifecycle.
 
     Returns:
-        total_reward, final_torso_x, final_com_x, frames.
+        total_reward, final_x, episode_steps, frames.
     """
     owns_env = env is None
     if owns_env:
@@ -104,6 +100,7 @@ def run_eval_episode(
     obs, _ = env.reset(seed=seed)  # type: ignore[union-attr]
     frames: list[np.ndarray] = []
     total_reward = 0.0
+    ep_steps = 0
     done = False
 
     with torch.no_grad():
@@ -118,17 +115,14 @@ def run_eval_episode(
             action = action_fn(state_t)
             obs, reward, terminated, truncated, _ = env.step(action)  # type: ignore[union-attr]
             total_reward += float(reward)
+            ep_steps += 1
             done = terminated or truncated
 
-    mj_data = env.unwrapped.data  # type: ignore[union-attr]
-    mj_model = env.unwrapped.model  # type: ignore[union-attr]
-    torso_id: int = mj_model.body("torso").id
-    final_torso_x = float(mj_data.qpos[0])
-    final_com_x = float(mj_data.subtree_com[torso_id][0])
+    final_x = float(env.unwrapped.data.qpos[0])  # type: ignore[union-attr]
 
     if owns_env:
         env.close()  # type: ignore[union-attr]
-    return total_reward, final_torso_x, final_com_x, frames
+    return total_reward, final_x, ep_steps, frames
 
 
 def evaluate_and_record(
@@ -140,28 +134,24 @@ def evaluate_and_record(
     device: torch.device,
     writer: SummaryWriter,
     n_episodes: int,
-    best_mean_reward: float = float("-inf"),
-) -> tuple[float, float, float, str]:
-    """Run *n_episodes* greedy evaluations; conditionally record a video.
+) -> tuple[float, float, float]:
+    """Run *n_episodes* greedy evaluations and record the best episode.
 
     Toggles the *policy* to eval mode (disabling NoisyNets / dropout) and
     restores train mode before returning.
 
     Returns:
-        mean, std, max of episode rewards and the path to the saved video
-        (empty string when no improvement).
+        mean_reward, std_reward, mean_final_x.
     """
     policy.eval()
 
-    # Reuse a single eval env so the rendering context (OpenGL state) is
-    # identical across episodes and the optional re-recording pass.
     eval_env = build_from_config(env_cfg, mode="eval")
 
     returns = np.empty(n_episodes, dtype=np.float64)
-    final_torso_xs = np.empty(n_episodes, dtype=np.float64)
-    final_com_xs = np.empty(n_episodes, dtype=np.float64)
+    final_xs = np.empty(n_episodes, dtype=np.float64)
+    ep_steps = np.empty(n_episodes, dtype=np.int64)
     for i in range(n_episodes):
-        returns[i], final_torso_xs[i], final_com_xs[i], _ = run_eval_episode(
+        returns[i], final_xs[i], ep_steps[i], _ = run_eval_episode(
             action_fn,
             env_cfg,
             device,
@@ -172,38 +162,24 @@ def evaluate_and_record(
 
     mean_r, std_r = float(returns.mean()), float(returns.std())
     best_idx = int(returns.argmax())
-    max_r = float(returns[best_idx])
 
-    filename = ""
-    if mean_r > best_mean_reward:
-        reward, _, _, frames = run_eval_episode(
-            action_fn,
-            env_cfg,
-            device,
-            record=True,
-            seed=int(step) + best_idx,
-            env=eval_env,
-        )
-        if abs(reward - max_r) > 0.5:
-            log.warning(
-                "Re-eval reward %.2f differs from first-pass max %.2f "
-                "(possible rendering non-determinism)",
-                reward,
-                max_r,
-            )
-        os.makedirs(video_dir, exist_ok=True)
-        filename = os.path.join(video_dir, f"eval_step_{step}_reward_{reward:.2f}.mp4")
-        imageio.mimsave(filename, frames, fps=30)
+    # Always record the best episode
+    _, _, _, frames = run_eval_episode(
+        action_fn,
+        env_cfg,
+        device,
+        record=True,
+        seed=int(step) + best_idx,
+        env=eval_env,
+    )
+    os.makedirs(video_dir, exist_ok=True)
+    imageio.mimsave(os.path.join(video_dir, f"eval_step_{step}.mp4"), frames, fps=30)
 
     eval_env.close()
     policy.train()
 
     writer.add_scalar("eval/mean_reward", mean_r, step)
-    writer.add_scalar("eval/std_reward", std_r, step)
-    writer.add_scalar("eval/max_reward", max_r, step)
-    writer.add_scalars(
-        "eval/final_x_position",
-        {"torso": float(final_torso_xs.mean()), "com": float(final_com_xs.mean())},
-        step,
-    )
-    return mean_r, std_r, max_r, filename
+    writer.add_scalar("eval/final_x", float(final_xs.mean()), step)
+    avg_speeds = final_xs / (ep_steps * 0.008)  # dt = 0.008
+    writer.add_scalar("eval/avg_speed", float(avg_speeds.mean()), step)
+    return mean_r, std_r, float(final_xs.mean())

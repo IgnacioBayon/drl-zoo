@@ -2,8 +2,12 @@ import gymnasium as gym
 from gymnasium.wrappers import FrameStackObservation
 from omegaconf import DictConfig
 
-from src.wrappers import CustomReward, DiscretizeAction, ImageObsWrapper
-
+from src.wrappers import (
+    CustomReward,
+    DiscretizeAction,
+    ImageObsWrapper,
+    SmoothHopperWrapper,
+)
 
 # MuJoCo render resolution — always full; ImageObsWrapper downscales for the agent.
 _RENDER_RES = 480
@@ -22,7 +26,8 @@ def build_envs(
     **env_kwargs: dict,
 ):
     def wrap_env(env: gym.Env) -> gym.Env:
-        env = CustomReward(env, use_com_reward)
+        # env = CustomReward(env, use_com_reward)
+        env = SmoothHopperWrapper(env)
         env = DiscretizeAction(env, bins, multidiscrete)
         if render_mode != "human":
             env = ImageObsWrapper(env, obs_size=obs_size)
@@ -48,12 +53,6 @@ def build_envs(
         all_env_kwargs.pop("vectorization_mode")
         all_env_kwargs.pop("wrappers")
         return wrap_env(gym.make(**all_env_kwargs))
-
-
-def build_env(*args, **kwargs):
-    kwargs["num_envs"] = 1
-    kwargs["vectorized"] = False
-    return build_envs(*args, **kwargs)
 
 
 def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
@@ -84,27 +83,3 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
     if env_cfg.get("max_episode_steps") is not None:
         kwargs["max_episode_steps"] = int(env_cfg.max_episode_steps)
     return build_envs(**kwargs)
-
-
-if __name__ == "__main__":
-    # Create a single environment and run a simulation in human render mode
-    env = build_env(
-        env_name="Hopper-v5",
-        render_mode="human",
-        healthy_z_range=(0.7, 2.0),
-        healthy_angle_range=(-1.0, 1.0),
-        xml_file=r".venv\Lib\site-packages\gymnasium\envs\mujoco\assets\hopper.xml",
-    )
-
-    obs, info = env.reset()
-    for _ in range(10000):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        if terminated or truncated:
-            obs, info = env.reset()
-
-        print(
-            env.unwrapped.mujoco_renderer.render(
-                render_mode="rgb_array", width=84, height=84
-            ).shape
-        )  # Access the underlying renderer for debugging
