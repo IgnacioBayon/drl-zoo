@@ -1,8 +1,7 @@
-_target_: src.dqn.models.DQNetwork
+_target_: src.dqn.model.DQNetwork
 
 name: dqn
 
 in_channels: ${env.stack_size}
-in_resolution: ${env.train_resolution}
 action_bins: ${env.action_bins}
 num_branches: ???          # filled at runtime from env action space

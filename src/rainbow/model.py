@@ -1,4 +1,4 @@
-"""Model architectures for DQN and Rainbow DQN with shared encoder."""
+"""Rainbow DQN model: Dueling + NoisyNets + C51 distributional."""
 
 from __future__ import annotations
 
@@ -6,80 +6,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ---------------------------------------------------------------------------
-# Shared encoder — identical architecture for both DQN and Rainbow
-# ---------------------------------------------------------------------------
-
-
-class Encoder(nn.Module):
-    """CNN encoder shared between DQN and Rainbow for fair comparison.
-
-    Args:
-        in_channels: Number of input channels (typically ``stack_size``).
-        in_resolution: Spatial resolution ``(H, W)`` of each frame.
-    """
-
-    OUT_FEATURES: int = 64 * 7 * 7  # 3136
-
-    def __init__(self, in_channels: int) -> None:
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, 32, 8, stride=4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 4, stride=2),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, stride=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((7, 7)),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.conv(x).view(x.size(0), -1)  # (B, OUT_FEATURES)
-
+from src.encoder import Encoder
 
 # ---------------------------------------------------------------------------
-# DQN — branching Q-network
+# NoisyLinear (Fortunato et al., 2018)
 # ---------------------------------------------------------------------------
 
 
-class DQNetwork(nn.Module):
-    """Branching DQN: shared encoder → hidden FC → one linear head per action branch.
-
-    Args:
-        in_channels: Number of stacked frames.
-        in_resolution: ``(H, W)`` spatial resolution (unused, kept for config compat).
-        action_bins: Discrete bins per action dimension.
-        num_branches: Number of independent action dimensions.
-    """
-
-    def __init__(
-        self,
-        in_channels: int,
-        in_resolution: tuple[int, ...],
-        action_bins: int,
-        num_branches: int,
-        **kwargs: object,
-    ) -> None:
-        super().__init__()
-        self.num_branches = num_branches
-        self.action_bins = action_bins
-        self.encoder = Encoder(in_channels)
-        self.fc = nn.Sequential(
-            nn.Linear(self.encoder.OUT_FEATURES, 512),
-            nn.ReLU(),
-        )
-        self.branches = nn.Linear(512, num_branches * action_bins)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Returns Q-values of shape ``(B, branches, bins)``."""
-        z = self.fc(self.encoder(x))
-        return self.branches(z).view(-1, self.num_branches, self.action_bins)
-
-
-# ---------------------------------------------------------------------------
-# Rainbow DQN components
-# ---------------------------------------------------------------------------
 class NoisyLinear(nn.Module):
+    """Factorised Gaussian noisy linear layer."""
+
     def __init__(
         self, in_features: int, out_features: int, sigma0: float = 0.5
     ) -> None:
@@ -101,7 +37,6 @@ class NoisyLinear(nn.Module):
 
         self.register_buffer("weight_epsilon", torch.zeros(out_features, in_features))
         self.register_buffer("bias_epsilon", torch.zeros(out_features))
-        # Pre-allocated noise vectors (avoids torch.randn allocation per reset)
         self.register_buffer("_noise_in", torch.zeros(in_features))
         self.register_buffer("_noise_out", torch.zeros(out_features))
         self.reset_noise()
@@ -129,10 +64,15 @@ class NoisyLinear(nn.Module):
         return F.linear(x, w, b)
 
 
+# ---------------------------------------------------------------------------
+# Dueling head (per-branch)
+# ---------------------------------------------------------------------------
+
+
 class DuelingHead(nn.Module):
     """Dueling distributional head for a single action branch (Wang et al., 2016).
 
-    Outputs ``(B, action_bins, atoms)`` logits used for C51 distributional RL.
+    Outputs ``(B, action_bins, atoms)`` logits for C51.
 
     Args:
         latent_dim: Encoder output dimensionality.
@@ -140,7 +80,7 @@ class DuelingHead(nn.Module):
         atoms: Number of atoms for the categorical distribution.
         hidden_dim: Hidden layer width inside each stream.
         sigma0: NoisyLinear initial sigma.
-        noisy: If ``True`` (default), use NoisyLinear; otherwise standard ``nn.Linear``.
+        noisy: If ``True``, use NoisyLinear; otherwise standard ``nn.Linear``.
     """
 
     def __init__(
@@ -159,11 +99,9 @@ class DuelingHead(nn.Module):
         Linear = NoisyLinear if noisy else nn.Linear
         extra = {"sigma0": sigma0} if noisy else {}
 
-        # Value stream → (B, atoms)
         self.v1 = Linear(latent_dim, hidden_dim, **extra)
         self.v2 = Linear(hidden_dim, atoms, **extra)
 
-        # Advantage stream → (B, action_bins * atoms)
         self.a1 = Linear(latent_dim, hidden_dim, **extra)
         self.a2 = Linear(hidden_dim, action_bins * atoms, **extra)
 
@@ -175,19 +113,18 @@ class DuelingHead(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Rainbow DQN — full model
+# RainbowDQN — full model
 # ---------------------------------------------------------------------------
 
 
 class RainbowDQN(nn.Module):
-    """Rainbow DQN with branching for discretised continuous control (Hessel et al., 2017).
+    """Rainbow DQN with branching for discretised continuous control.
 
     Combines: Dueling architecture, NoisyNets, and C51 distributional output.
-    Uses the same :class:`Encoder` as :class:`DQNetwork` for fair comparison.
+    Uses the same :class:`Encoder` as DQNetwork for fair comparison.
 
     Args:
         in_channels: Number of stacked frames.
-        in_resolution: ``(H, W)`` spatial resolution.
         action_bins: Discrete bins per action dimension.
         num_branches: Number of independent action dimensions.
         atoms: C51 number of atoms.
@@ -195,12 +132,12 @@ class RainbowDQN(nn.Module):
         vmax: Maximum return support value.
         noisy_sigma0: NoisyLinear initial sigma.
         head_hidden_dim: Hidden layer width in dueling streams.
+        noisy: Whether to use NoisyLinear layers.
     """
 
     def __init__(
         self,
         in_channels: int,
-        in_resolution: tuple[int, ...],
         action_bins: int,
         num_branches: int,
         atoms: int = 51,
@@ -236,9 +173,8 @@ class RainbowDQN(nn.Module):
         self.register_buffer("support", torch.linspace(vmin, vmax, atoms))
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-        """Returns dict with ``logits``, ``probs``, ``q`` — each ``(B, branches, bins, …)``."""
+        """Returns dict with ``logits``, ``probs``, ``q`` — each ``(B, branches, bins, ...)``."""
         z = self.encoder(x)
-        # Each head outputs (B, bins, atoms)
         logits = torch.stack(
             [h(z) for h in self.heads], dim=1
         )  # (B, branches, bins, atoms)

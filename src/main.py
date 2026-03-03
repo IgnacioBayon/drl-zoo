@@ -6,7 +6,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from src.dqn.train_dqn import train_dqn
-from src.dqn.train_rainbow import train_rainbow
+from src.rainbow.train import train_rainbow
 
 _TRAINERS = {
     "dqn": train_dqn,

@@ -1,68 +1,12 @@
 import gymnasium as gym
-import mujoco
-import numpy as np
-from gymnasium.wrappers import (
-    AddRenderObservation,
-    DiscretizeAction,
-    FrameStackObservation,
-)
+from gymnasium.wrappers import FrameStackObservation
 from omegaconf import DictConfig
 
-
-class CustomReward(gym.Wrapper):
-    """Replaces default reward with center of mass forward velocity and reduced coefficients."""
-
-    def __init__(
-        self,
-        env: gym.Env,
-        use_com: bool = True,
-    ) -> None:
-        super().__init__(env)
-        self._use_com = use_com
-        self._torso_id = self.unwrapped.model.body("torso").id
-
-    def step(self, action):
-        if self._use_com:
-            pos_before = float(self.unwrapped.data.subtree_com[self._torso_id][0])
-        else:
-            pos_before = float(self.unwrapped.data.qpos[0])
-        obs, og_reward, terminated, truncated, info = self.env.step(action)
-        if self._use_com:
-            pos_after = float(self.unwrapped.data.subtree_com[self._torso_id][0])
-        else:
-            pos_after = float(self.unwrapped.data.qpos[0])
-
-        # x_vel = (pos_after - pos_before) / self.unwrapped.dt
-        x_vel = obs[6]
-        # forward_reward = self.unwrapped._forward_reward_weight * x_vel
-        forward_reward = (x_vel >= 0) * 1.0
-        ctrl_cost = self.unwrapped._ctrl_cost_weight * float(np.sum(np.square(action)))
-        # healthy_reward = self.unwrapped._healthy_reward if not terminated else 0.0
-        healthy_reward = self.unwrapped._healthy_reward if og_reward > 0 else 0.0
-
-        reward = forward_reward + healthy_reward - ctrl_cost
-        info["reward_forward"] = forward_reward
-        info["reward_ctrl"] = -ctrl_cost
-        info["reward_healthy"] = healthy_reward
-        return obs, reward, terminated, truncated, info
+from src.wrappers import CustomReward, DiscretizeAction, ImageObsWrapper
 
 
-class GrayScalePixelObs(gym.ObservationWrapper):
-    """Converts RGB pixel obs to single-channel (H, W) using grayscale or luminance."""
-
-    # BT.601 luminance coefficients
-    _LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
-    # Equal-weight mean — same dot-product path as luminance for speed.
-    _MEAN_WEIGHTS = np.array([1 / 3, 1 / 3, 1 / 3], dtype=np.float32)
-
-    def __init__(self, env: gym.Env, use_luminance: bool) -> None:
-        super().__init__(env)
-        h, w = env.observation_space.shape[:2]
-        self.observation_space = gym.spaces.Box(0, 255, (h, w), dtype=np.uint8)
-        self._weights = self._LUMA_WEIGHTS if use_luminance else self._MEAN_WEIGHTS
-
-    def observation(self, obs):
-        return (obs @ self._weights).astype(np.uint8)
+# MuJoCo render resolution — always full; ImageObsWrapper downscales for the agent.
+_RENDER_RES = 480
 
 
 def build_envs(
@@ -70,9 +14,8 @@ def build_envs(
     num_envs: int = 1,
     render_mode: str = "rgb_array",
     bins: int = 5,
+    obs_size: int = 64,
     stack_size: int = 4,
-    use_luminance: bool = False,
-    resolution: tuple[int, int] = (480, 480),
     use_com_reward: bool = False,
     multidiscrete: bool = False,
     vectorized: bool = True,
@@ -82,18 +25,17 @@ def build_envs(
         env = CustomReward(env, use_com_reward)
         env = DiscretizeAction(env, bins, multidiscrete)
         if render_mode != "human":
-            env = AddRenderObservation(env)
-            env = GrayScalePixelObs(env, use_luminance)
+            env = ImageObsWrapper(env, obs_size=obs_size)
         env = FrameStackObservation(env, stack_size)
         return env
 
     all_env_kwargs = {
         "id": env_name,
         "num_envs": num_envs,
-        "vectorization_mode": "sync",
+        "vectorization_mode": "async",
         "render_mode": render_mode,
-        "width": resolution[0],
-        "height": resolution[1],
+        "width": _RENDER_RES,
+        "height": _RENDER_RES,
         "wrappers": [wrap_env],
         "exclude_current_positions_from_observation": False,
         **env_kwargs,
@@ -120,11 +62,8 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
         num_envs=env_cfg.num_envs,
         # observation space
         render_mode="rgb_array",
-        resolution=tuple(
-            env_cfg.train_resolution
-        ),  # render at train resolution directly
+        obs_size=env_cfg.obs_size,
         stack_size=env_cfg.stack_size,
-        use_luminance=env_cfg.use_luminance,
         # action space discretisation
         bins=env_cfg.action_bins,
         multidiscrete=env_cfg.action_multidiscrete,
@@ -145,35 +84,6 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
     if env_cfg.get("max_episode_steps") is not None:
         kwargs["max_episode_steps"] = int(env_cfg.max_episode_steps)
     return build_envs(**kwargs)
-
-
-def build_render_env(env_cfg: DictConfig) -> gym.Env:
-    """Build a bare MuJoCo env at full resolution for video rendering.
-
-    This env is **never stepped** — only used to sync physics state and
-    call ``render()`` to produce high-resolution frames.
-    """
-    kwargs: dict = dict(
-        id=env_cfg.name,
-        render_mode="rgb_array",
-        width=env_cfg.full_resolution[0],
-        height=env_cfg.full_resolution[1],
-    )
-    if env_cfg.xml_file is not None:
-        kwargs["xml_file"] = env_cfg.xml_file
-    env = gym.make(**kwargs)
-    env.reset()  # allocate MuJoCo data structures
-    return env
-
-
-def sync_mujoco_state(src: gym.Env, dst: gym.Env) -> None:
-    """Copy MuJoCo physics state from *src* to *dst* and recompute derived quantities."""
-    src_d = src.unwrapped.data
-    dst_d = dst.unwrapped.data
-    dst_d.time = src_d.time
-    dst_d.qpos[:] = src_d.qpos[:]
-    dst_d.qvel[:] = src_d.qvel[:]
-    mujoco.mj_forward(dst.unwrapped.model, dst_d)
 
 
 if __name__ == "__main__":

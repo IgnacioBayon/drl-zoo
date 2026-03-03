@@ -34,6 +34,6 @@ per_beta_start: 0.4    # initial IS-weight correction
 per_beta_frames: 1_000_000  # anneal β → 1.0 over this many frames
 
 # logging / recording
-eval_interval_frames: 10_000  # evaluate & record every N frames
+eval_interval_frames: 100_000  # evaluate & record every N frames
 eval_episodes: 5              # number of greedy episodes per evaluation
 log_interval_frames: 5_000    # tensorboard scalar logging interval

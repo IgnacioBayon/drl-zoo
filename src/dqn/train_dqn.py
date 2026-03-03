@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 from src.environment import build_from_config
 from src.utils import evaluate_and_record, get_device, get_loss_fn, save_checkpoint
 
-from .models import DQNetwork
+from .model import DQNetwork
 
 log = logging.getLogger(__name__)
 
@@ -317,7 +317,7 @@ def train_dqn(cfg: DictConfig) -> None:
     optimizer = torch.optim.AdamW(policy.parameters(), lr=cfg.train.lr)
 
     # -- CPU replay buffer (uint8 to save RAM) ---------------------------------
-    res_h, res_w = tuple(cfg.env.train_resolution)
+    res_h = res_w = cfg.env.obs_size
     buf_sz = int(cfg.train.buffer_size)
     stk = cfg.env.stack_size
     obs_shape = (buf_sz, stk, res_h, res_w)

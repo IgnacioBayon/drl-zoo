@@ -17,11 +17,11 @@ import torch.nn as nn
 from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
 
-from src.environment import build_from_config, build_render_env, sync_mujoco_state
+from src.environment import build_from_config
 
 log = logging.getLogger(__name__)
 
-# obs tensor (1, C, H, W) on device → action numpy (branches,)
+# obs tensor (1, C, H, W) on device → action numpy (n_joints,)
 ActionFn = Callable[[torch.Tensor], np.ndarray]
 
 
@@ -84,18 +84,15 @@ def run_eval_episode(
     seed: int | None = None,
     env: object | None = None,
 ) -> tuple[float, float, float, list[np.ndarray]]:
-    """Run one greedy episode at *train* resolution.
+    """Run one greedy episode and optionally capture full-resolution frames.
 
-    When *record* is ``True`` a separate full-resolution MuJoCo env is
-    created and the physics state is synced every step to capture 480×480
-    frames without affecting the agent's 84×84 observations.
+    Recording grabs 480×480 RGB frames via ``env.render()`` (the
+    underlying MuJoCo renderer) each step.  The agent still receives the
+    downscaled grayscale observations produced by ``ImageObsWrapper``.
 
     Args:
         env: Optional pre-built eval env to reuse. When provided the env
             is **not** closed on return — the caller owns its lifecycle.
-            Reusing a single env across episodes ensures the rendering
-            context is identical, avoiding pixel-level non-determinism
-            that would otherwise cause divergent trajectories.
 
     Returns:
         total_reward, final_torso_x, final_com_x, frames.
@@ -103,7 +100,6 @@ def run_eval_episode(
     owns_env = env is None
     if owns_env:
         env = build_from_config(env_cfg, mode="eval")
-    render_env = build_render_env(env_cfg) if record else None
 
     obs, _ = env.reset(seed=seed)  # type: ignore[union-attr]
     frames: list[np.ndarray] = []
@@ -112,9 +108,8 @@ def run_eval_episode(
 
     with torch.no_grad():
         while not done:
-            if render_env is not None:
-                sync_mujoco_state(env, render_env)
-                frames.append(render_env.render())
+            if record:
+                frames.append(env.render())  # type: ignore[union-attr]
 
             state_t = (
                 torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
@@ -133,8 +128,6 @@ def run_eval_episode(
 
     if owns_env:
         env.close()  # type: ignore[union-attr]
-    if render_env is not None:
-        render_env.close()
     return total_reward, final_torso_x, final_com_x, frames
 
 

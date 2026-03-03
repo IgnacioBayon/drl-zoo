@@ -1,9 +1,8 @@
-_target_: src.dqn.models.RainbowDQN
+_target_: src.rainbow.model.RainbowDQN
 
 name: rainbow
 
 in_channels: ${env.stack_size}
-in_resolution: ${env.train_resolution}
 action_bins: ${env.action_bins}
 num_branches: ???          # filled at runtime from env action space
 
