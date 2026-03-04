@@ -160,7 +160,7 @@ class ImageObsWrapper(gym.ObservationWrapper):
 
 
 class SmoothHopperWrapper(gym.RewardWrapper):
-    def __init__(self, env, target_velocity=1.0):
+    def __init__(self, env, target_velocity=2.0):
         super().__init__(env)
         self.target_velocity = target_velocity
         self.last_action = np.zeros(env.action_space.shape)

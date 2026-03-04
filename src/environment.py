@@ -20,14 +20,14 @@ def build_envs(
     bins: int = 5,
     obs_size: int = 64,
     stack_size: int = 4,
-    use_com_reward: bool = False,
     multidiscrete: bool = False,
+    target_velocity: float = None,
     vectorized: bool = True,
     **env_kwargs: dict,
 ):
     def wrap_env(env: gym.Env) -> gym.Env:
         # env = CustomReward(env, use_com_reward)
-        env = SmoothHopperWrapper(env)
+        env = SmoothHopperWrapper(env, target_velocity)
         env = DiscretizeAction(env, bins, multidiscrete)
         if render_mode != "human":
             env = ImageObsWrapper(env, obs_size=obs_size)
@@ -66,19 +66,28 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
         # action space discretisation
         bins=env_cfg.action_bins,
         multidiscrete=env_cfg.action_multidiscrete,
-        # reward shaping
-        use_com_reward=env_cfg.use_com_reward,
-        forward_reward_weight=env_cfg.forward_reward_weight,
-        healthy_reward=env_cfg.healthy_reward,
-        ctrl_cost_weight=env_cfg.ctrl_cost_weight,
-        # env-specific init
-        healthy_z_range=tuple(env_cfg.healthy_z_range),
-        healthy_angle_range=tuple(env_cfg.healthy_angle_range),
-        reset_noise_scale=env_cfg.reset_noise_scale,
         # vectorised envs
         vectorized=mode == "train",
     )
-    if env_cfg.xml_file is not None:
+    # Reward shaping
+    if env_cfg.get("forward_reward_weight") is not None:
+        kwargs["forward_reward_weight"] = env_cfg.forward_reward_weight
+    if env_cfg.get("healthy_reward") is not None:
+        kwargs["healthy_reward"] = env_cfg.healthy_reward
+    if env_cfg.get("ctrl_cost_weight") is not None:
+        kwargs["ctrl_cost_weight"] = env_cfg.ctrl_cost_weight
+    if env_cfg.get("contact_cost_weight") is not None:
+        kwargs["contact_cost_weight"] = env_cfg.contact_cost_weight
+    if env_cfg.get("target_velocity") is not None:
+        kwargs["target_velocity"] = env_cfg.target_velocity
+    # Env-specific init
+    if env_cfg.get("healthy_z_range") is not None:
+        kwargs["healthy_z_range"] = tuple(env_cfg.healthy_z_range)
+    if env_cfg.get("healthy_angle_range") is not None:
+        kwargs["healthy_angle_range"] = tuple(env_cfg.healthy_angle_range)
+    if env_cfg.get("reset_noise_scale") is not None:
+        kwargs["reset_noise_scale"] = env_cfg.reset_noise_scale
+    if env_cfg.get("xml_file") is not None:
         kwargs["xml_file"] = env_cfg.xml_file
     if env_cfg.get("max_episode_steps") is not None:
         kwargs["max_episode_steps"] = int(env_cfg.max_episode_steps)

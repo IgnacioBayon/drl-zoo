@@ -232,13 +232,13 @@ def _train_loop(
             reward_window_sum += ret
             episode_returns.append(ret)
 
-            writer.add_scalar("episode/reward", ret, global_step)
-            fi = (infos.get("final_info") or [None] * num_envs)[i]
-            final_x = float(fi["x_position"]) if fi and "x_position" in fi else 0.0
-            writer.add_scalar("episode/final_x", final_x, global_step)
+            final_x = float(infos["x_position"][i]) if "x_position" in infos else 0.0
             ep_time = int(worker_steps[i]) * 0.008  # dt = 0.008
             avg_speed = final_x / ep_time if ep_time > 0 else 0.0
+            
+            writer.add_scalar("episode/final_x", final_x, global_step)
             writer.add_scalar("episode/avg_speed", avg_speed, global_step)
+            writer.add_scalar("episode/reward", ret, global_step)
 
             worker_returns[i] = 0.0
             worker_steps[i] = 0
