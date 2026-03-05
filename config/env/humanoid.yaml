@@ -14,14 +14,14 @@ action_multidiscrete: true   # branching DQN
 
 # reward shaping
 use_com_reward: false
-target_velocity: 1.0          # Only used if use_com_reward is true
-forward_reward_weight: 3.0  # Default is 1.0
-healthy_reward: 1.0          # Default is 1.0
-ctrl_cost_weight: 0.01     # Default is 0.001.
-contact_cost_weight: 5e-7   # Default is 0.0 (ignore contact cost)
+target_velocity: 1.0          
+forward_reward_weight: 3.0
+healthy_reward: 1.0     
+ctrl_cost_weight: 0.01     # Default is 0.01.
+contact_cost_weight: 1e-7   # Default is 5e-7
 
 # env-specific init
-healthy_z_range: [0.7, 100.0]     # Default is [0.7, inf]
+healthy_z_range: null     # Default is [0.7, inf]
 reset_noise_scale: 0.01          # Default is 0.01
 max_episode_steps: 5000           # ~30s of sim time (dt=0.008) and 2m or real time
 
