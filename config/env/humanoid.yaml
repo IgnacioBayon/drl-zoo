@@ -25,5 +25,12 @@ healthy_z_range: [0.7, 100.0]     # Default is [0.7, inf]
 reset_noise_scale: 0.01          # Default is 0.01
 max_episode_steps: 5000           # ~30s of sim time (dt=0.008) and 2m or real time
 
+#   0 abdomen_y,        1 abdomen_z,        2 abdomen_x,
+#   3 right_hip_x,      4 right_hip_z,      5 right_hip_y, 6 right_knee,
+#   7 left_hip_x,       8 left_hip_z,       9 left_hip_y, 10 left_knee,
+#  11 right_shoulder1,  12 right_shoulder2, 13 right_elbow,
+#  14 left_shoulder1,   15 left_shoulder2,  16 left_elbow
+frozen_joints: [0, 1, 2, 11, 12, 13, 14, 15, 16]  # abdomen + arms → 8 active leg joints
+
 xml_file: null
 # xml_file: ".venv/Lib/site-packages/gymnasium/envs/mujoco/assets/hopper.xml"

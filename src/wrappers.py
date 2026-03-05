@@ -9,6 +9,49 @@ from gymnasium.core import ActType, ObsType
 from gymnasium.spaces import Box, Discrete, MultiDiscrete
 
 
+class FreezeJointsWrapper(gym.ActionWrapper[ObsType, np.ndarray, np.ndarray]):
+    """Removes frozen joints from the action space.
+
+    The wrapped environment sees a reduced-dimension ``Box`` action space
+    containing only the *active* joints.  When the agent produces an action,
+    ``action()`` reconstructs the full-dimension vector by inserting **0**
+    at every frozen-joint index.
+
+    Args:
+        env: Environment with a continuous ``Box`` action space.
+        frozen_joints: Sorted indices of joints to freeze (set to 0).
+    """
+
+    def __init__(
+        self,
+        env: gym.Env[ObsType, np.ndarray],
+        frozen_joints: list[int],
+    ) -> None:
+        super().__init__(env)
+        original_space: Box = env.action_space  # type: ignore[assignment]
+        n_total = original_space.shape[0]
+
+        frozen = np.array(sorted(set(frozen_joints)), dtype=int)
+        active = np.array([i for i in range(n_total) if i not in frozen], dtype=int)
+        assert len(active) > 0, "Cannot freeze every joint"
+
+        self._frozen = frozen
+        self._active = active
+        self._n_total = n_total
+
+        self.action_space = Box(
+            low=original_space.low[active],
+            high=original_space.high[active],
+            dtype=original_space.dtype,
+        )
+
+    def action(self, act: np.ndarray) -> np.ndarray:
+        """Expand reduced action back to full dimension (frozen joints = 0)."""
+        full = np.zeros(self._n_total, dtype=self.env.action_space.dtype)
+        full[self._active] = act
+        return full
+
+
 class DiscretizeAction(gym.ActionWrapper[ObsType, int, ActType]):
     """Discretizes a continuous Box action space using linspace endpoints.
 
@@ -97,44 +140,6 @@ class DiscretizeAction(gym.ActionWrapper[ObsType, int, ActType]):
         return int(np.ravel_multi_index(indices, self._bins))
 
 
-class CustomReward(gym.Wrapper):
-    """Replaces default reward with center of mass forward velocity and reduced coefficients."""
-
-    def __init__(
-        self,
-        env: gym.Env,
-        use_com: bool = True,
-    ) -> None:
-        super().__init__(env)
-        self._use_com = use_com
-        self._torso_id = self.unwrapped.model.body("torso").id
-
-    def step(self, action):
-        if self._use_com:
-            pos_before = float(self.unwrapped.data.subtree_com[self._torso_id][0])
-        else:
-            pos_before = float(self.unwrapped.data.qpos[0])
-        obs, og_reward, terminated, truncated, info = self.env.step(action)
-        if self._use_com:
-            pos_after = float(self.unwrapped.data.subtree_com[self._torso_id][0])
-        else:
-            pos_after = float(self.unwrapped.data.qpos[0])
-
-        x_vel = obs[6]
-        forward_reward = (x_vel >= 0) * 1.0
-        healthy_reward = self.unwrapped._healthy_reward if og_reward > 0 else 0.0
-        # x_vel = (pos_after - pos_before) / self.unwrapped.dt
-        # forward_reward = self.unwrapped._forward_reward_weight * x_vel
-        # healthy_reward = self.unwrapped._healthy_reward if not terminated else 0.0
-        ctrl_cost = self.unwrapped._ctrl_cost_weight * float(np.sum(np.square(action)))
-
-        reward = forward_reward + healthy_reward - ctrl_cost
-        info["reward_forward"] = forward_reward
-        info["reward_ctrl"] = -ctrl_cost
-        info["reward_healthy"] = healthy_reward
-        return obs, reward, terminated, truncated, info
-
-
 class ImageObsWrapper(gym.ObservationWrapper):
     """Render, downscale, and grayscale in a single wrapper.
 
@@ -166,21 +171,14 @@ class SmoothHopperWrapper(gym.RewardWrapper):
         self.last_action = np.zeros(env.action_space.shape)
 
     def reward(self, reward):
-        # Extract terms from the original info if available, or re-calculate
-        # Note: Standard Hopper reward = forward_reward + healthy_reward - ctrl_cost
-
-        # 1. Speed: Change linear reward to a target-tracking reward for stability
-        # (Original reward maximizes velocity -> instability. This encourages a specific fast speed.)
         velocity = self.env.unwrapped.data.qvel[0]
         velocity_reward = np.exp(-np.square(velocity - self.target_velocity))
 
-        # 2. Smoothness: Penalize the difference between consecutive actions (Action Rate)
-        # This is the key missing component in standard Hopper for "smooth" motion.
         current_action = self.env.unwrapped.data.ctrl.copy()
         action_smoothness_penalty = np.sum(np.square(current_action - self.last_action))
         self.last_action = current_action
 
-        # Combine: Keep healthy reward (usually ~1.0) + Velocity - Smoothness
+        # Combine: Healthy + Velocity - Smoothness
         new_reward = (
             self.env.unwrapped._healthy_reward
             + (self.env.unwrapped._forward_reward_weight * velocity_reward)

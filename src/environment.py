@@ -3,8 +3,8 @@ from gymnasium.wrappers import FrameStackObservation
 from omegaconf import DictConfig
 
 from src.wrappers import (
-    CustomReward,
     DiscretizeAction,
+    FreezeJointsWrapper,
     ImageObsWrapper,
     SmoothHopperWrapper,
 )
@@ -22,11 +22,14 @@ def build_envs(
     stack_size: int = 4,
     multidiscrete: bool = False,
     target_velocity: float = None,
+    frozen_joints: list[int] | None = None,
     vectorized: bool = True,
     **env_kwargs: dict,
 ):
     def wrap_env(env: gym.Env) -> gym.Env:
         # env = CustomReward(env, use_com_reward)
+        if frozen_joints:
+            env = FreezeJointsWrapper(env, frozen_joints)
         env = SmoothHopperWrapper(env, target_velocity)
         env = DiscretizeAction(env, bins, multidiscrete)
         if render_mode != "human":
@@ -91,4 +94,6 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
         kwargs["xml_file"] = env_cfg.xml_file
     if env_cfg.get("max_episode_steps") is not None:
         kwargs["max_episode_steps"] = int(env_cfg.max_episode_steps)
+    if env_cfg.get("frozen_joints") is not None:
+        kwargs["frozen_joints"] = list(env_cfg.frozen_joints)
     return build_envs(**kwargs)
