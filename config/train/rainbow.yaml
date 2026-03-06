@@ -12,14 +12,6 @@ buffer_size: 300_000
 batch_size: 64
 start_train_after: 30_000    # collect this many frames before the first gradient step
 
-# exploration: noisy | eps_greedy
-exploration: noisy
-
-# epsilon-greedy params (only used when exploration == eps_greedy)
-epsilon_start: 1.0
-epsilon_end: 0.05
-epsilon_anneal_frames: 5_000_000
-
 # network updates
 train_every: 10                # gradient step every N env frames
 target_update_frames: 10_000  # ~8k gradient steps between copies (standard Rainbow)

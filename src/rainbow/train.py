@@ -176,9 +176,7 @@ def _train_loop(
     reward_window_sum = 0.0
     step_losses: list[torch.Tensor] = []
     avg_loss = 0.0
-    epsilon = 0.0  # only meaningful for eps_greedy
 
-    use_noisy: bool = bool(tcfg.exploration == "noisy")
     beta_start: float = float(tcfg.per_beta_start)
     beta_frames: int = int(tcfg.per_beta_frames)
     start_train_after: int = int(tcfg.start_train_after)
@@ -187,34 +185,13 @@ def _train_loop(
     start = perf_counter()
 
     for step in range(1, steps + 1):
-        # -- action selection --------------------------------------------------
-        if use_noisy:
-            online.reset_noise()
-            target.reset_noise()
-            with torch.no_grad():
-                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
-                q = online(obs_t)["q"]  # (num_envs, branches, bins)
-                actions = q.argmax(dim=-1).cpu().numpy()  # (num_envs, branches)
-        else:
-            frames_since_train = max(0, global_step - start_train_after)
-            epsilon = max(
-                tcfg.epsilon_end,
-                tcfg.epsilon_start
-                - (tcfg.epsilon_start - tcfg.epsilon_end)
-                * frames_since_train
-                / tcfg.epsilon_anneal_frames,
-            )
-            if np.random.rand() < epsilon:
-                actions = envs.action_space.sample()
-                if not multidiscrete:
-                    actions = actions[:, np.newaxis]  # (E,) -> (E, 1)
-            else:
-                with torch.no_grad():
-                    obs_t = (
-                        torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
-                    )
-                    q = online(obs_t)["q"]  # (num_envs, branches, bins)
-                    actions = q.argmax(dim=-1).cpu().numpy()
+        # -- action selection (NoisyNet exploration) ---------------------------
+        online.reset_noise()
+        target.reset_noise()
+        with torch.no_grad():
+            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device) / 255.0
+            q = online(obs_t)["q"]  # (num_envs, branches, bins)
+            actions = q.argmax(dim=-1).cpu().numpy()  # (num_envs, branches)
 
         # Env expects (E,) scalars for Discrete, (E, branches) for MultiDiscrete
         actions_env = actions if multidiscrete else actions.squeeze(-1)
@@ -235,7 +212,7 @@ def _train_loop(
             final_x = float(infos["x_position"][i]) if "x_position" in infos else 0.0
             ep_time = int(worker_steps[i]) * 0.008  # dt = 0.008
             avg_speed = final_x / ep_time if ep_time > 0 else 0.0
-            
+
             writer.add_scalar("episode/final_x", final_x, global_step)
             writer.add_scalar("episode/avg_speed", avg_speed, global_step)
             writer.add_scalar("episode/reward", ret, global_step)
@@ -337,8 +314,6 @@ def _train_loop(
             writer.add_scalar("train/loss", avg_loss, global_step)
             writer.add_scalar("train/fps", fps, global_step)
             writer.add_scalar("train/buffer_size", len(per_buffer), global_step)
-            if not use_noisy:
-                writer.add_scalar("train/epsilon", epsilon, global_step)
             writer.add_scalar(
                 "train/beta",
                 beta_start
@@ -424,7 +399,7 @@ def train_rainbow(cfg: DictConfig) -> None:
 
     log.info(
         "Training Rainbow DQN on %s | device=%s | envs=%d | buffer=%d | "
-        "branches=%d | atoms=%d | n_step=%d | exploration=%s",
+        "branches=%d | atoms=%d | n_step=%d",
         cfg.env.name,
         device,
         cfg.env.num_envs,
@@ -432,7 +407,6 @@ def train_rainbow(cfg: DictConfig) -> None:
         num_branches,
         cfg.model.atoms,
         cfg.train.n_step,
-        cfg.train.exploration,
     )
 
     elapsed, avg_fps = _train_loop(

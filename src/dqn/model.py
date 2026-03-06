@@ -22,7 +22,6 @@ class DQNetwork(nn.Module):
         in_channels: int,
         action_bins: int,
         num_branches: int,
-        **kwargs: object,
     ) -> None:
         super().__init__()
         self.num_branches = num_branches

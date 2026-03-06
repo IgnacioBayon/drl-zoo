@@ -1,7 +1,5 @@
 _target_: src.rainbow.model.RainbowDQN
 
-name: rainbow
-
 in_channels: ${env.stack_size}
 action_bins: ${env.action_bins}
 num_branches: ???          # filled at runtime from env action space
@@ -11,10 +9,7 @@ atoms: 51
 vmin: -10.0
 vmax: 400.0
 
-# NoisyNet: set to false to use standard linear layers (pair with eps_greedy)
-noisy: ${is_equal:${train.exploration}, "noisy"} 
-
-# NoisyNet initial sigma (ignored when noisy == false)
+# NoisyNet initial sigma
 noisy_sigma0: 0.5
 
 # Dueling head hidden layer width

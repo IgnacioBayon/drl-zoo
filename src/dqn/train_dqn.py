@@ -110,6 +110,7 @@ def _train_loop(
 
     # -- per-worker reward tracking --------------------------------------------
     worker_returns = np.zeros(num_envs, dtype=np.float64)
+    worker_steps = np.zeros(num_envs, dtype=np.int64)
     episode_returns: deque[float] = deque(maxlen=100)
     reward_window_sum = 0.0
     # Accumulate detached loss tensors between log events; sync once per interval.
@@ -143,18 +144,30 @@ def _train_loop(
 
         # Env expects (E,) scalars for Discrete, (E, branches) for MultiDiscrete
         actions_env = actions if multidiscrete else actions.squeeze(-1)
-        next_obs, rewards, terminations, truncations, _ = envs.step(actions_env)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions_env)
         dones = np.logical_or(terminations, truncations)
 
         # -- per-worker return accumulation ------------------------------------
         worker_returns += rewards.astype(np.float64)
+        worker_steps += 1
+
         for i in np.where(dones)[0]:
             if len(episode_returns) == episode_returns.maxlen:
                 reward_window_sum -= episode_returns[0]
             ret = float(worker_returns[i])
             reward_window_sum += ret
             episode_returns.append(ret)
+
+            final_x = float(infos["x_position"][i]) if "x_position" in infos else 0.0
+            ep_time = int(worker_steps[i]) * 0.008  # dt = 0.008
+            avg_speed = final_x / ep_time if ep_time > 0 else 0.0
+
+            writer.add_scalar("episode/final_x", final_x, global_step)
+            writer.add_scalar("episode/avg_speed", avg_speed, global_step)
+            writer.add_scalar("episode/reward", ret, global_step)
+
             worker_returns[i] = 0.0
+            worker_steps[i] = 0
 
         # -- store transition --------------------------------------------------
         # With gymnasium 1.2+ NEXT_STEP auto-reset, next_obs[i] is the *final*
@@ -249,7 +262,7 @@ def _train_loop(
             writer.add_scalar("train/epsilon", epsilon, global_step)
             writer.add_scalar("train/loss", avg_loss, global_step)
             writer.add_scalar("train/fps", fps, global_step)
-            writer.add_scalar("train/buffer_filled", buf_filled, global_step)
+            writer.add_scalar("train/buffer_size", buf_filled, global_step)
             avg_reward = 0.0
             if episode_returns:
                 avg_reward = reward_window_sum / len(episode_returns)
