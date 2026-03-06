@@ -5,12 +5,12 @@ lr: 1e-4            # standard Rainbow lr (Hessel et al. 2017)
 
 # RL
 gamma: 0.99
-total_frames: 10_000_000
+total_frames: 50_000_000
 
 # replay buffer
-buffer_size: 200_000
+buffer_size: 300_000
 batch_size: 64
-start_train_after: 20_000    # collect this many frames before the first gradient step
+start_train_after: 30_000    # collect this many frames before the first gradient step
 
 # exploration: noisy | eps_greedy
 exploration: noisy
@@ -18,7 +18,7 @@ exploration: noisy
 # epsilon-greedy params (only used when exploration == eps_greedy)
 epsilon_start: 1.0
 epsilon_end: 0.05
-epsilon_anneal_frames: 1_000_000
+epsilon_anneal_frames: 5_000_000
 
 # network updates
 train_every: 10                # gradient step every N env frames
@@ -36,4 +36,4 @@ per_beta_frames: 1_000_000  # anneal β → 1.0 over this many frames
 # logging / recording
 eval_interval_frames: 100_000  # evaluate & record every N frames
 eval_episodes: 5              # number of greedy episodes per evaluation
-log_interval_frames: 5_000    # tensorboard scalar logging interval
+log_interval_frames: 10_000    # tensorboard scalar logging interval

@@ -168,7 +168,7 @@ class SmoothHopperWrapper(gym.RewardWrapper):
     def __init__(self, env, target_velocity=2.0):
         super().__init__(env)
         self.target_velocity = target_velocity
-        self.last_action = np.zeros(env.action_space.shape)
+        self.last_action = np.zeros(env.unwrapped.action_space.shape)
 
     def reward(self, reward):
         velocity = self.env.unwrapped.data.qvel[0]

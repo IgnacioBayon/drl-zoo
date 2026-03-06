@@ -27,7 +27,6 @@ def build_envs(
     **env_kwargs: dict,
 ):
     def wrap_env(env: gym.Env) -> gym.Env:
-        # env = CustomReward(env, use_com_reward)
         if frozen_joints:
             env = FreezeJointsWrapper(env, frozen_joints)
         env = SmoothHopperWrapper(env, target_velocity)

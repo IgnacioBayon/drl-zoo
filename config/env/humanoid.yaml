@@ -13,12 +13,11 @@ action_bins: 3
 action_multidiscrete: true   # branching DQN
 
 # reward shaping
-use_com_reward: false
 target_velocity: 1.0          
 forward_reward_weight: 3.0
 healthy_reward: 1.0     
 ctrl_cost_weight: 0.01     # Default is 0.01.
-contact_cost_weight: 1e-7   # Default is 5e-7
+contact_cost_weight: 5e-7   # Default is 5e-7
 
 # env-specific init
 healthy_z_range: null     # Default is [0.7, inf]
@@ -30,7 +29,7 @@ max_episode_steps: 5000           # ~30s of sim time (dt=0.008) and 2m or real t
 #   7 left_hip_x,       8 left_hip_z,       9 left_hip_y, 10 left_knee,
 #  11 right_shoulder1,  12 right_shoulder2, 13 right_elbow,
 #  14 left_shoulder1,   15 left_shoulder2,  16 left_elbow
-frozen_joints: [0, 1, 2, 11, 12, 13, 14, 15, 16]  # abdomen + arms → 8 active leg joints
+frozen_joints: [1, 4, 8, 11, 12, 13, 14, 15, 16]  # limp arms and z hips
 
 xml_file: null
 # xml_file: ".venv/Lib/site-packages/gymnasium/envs/mujoco/assets/hopper.xml"

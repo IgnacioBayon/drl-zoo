@@ -13,7 +13,7 @@ action_bins: 3
 action_multidiscrete: false   # branching DQN
 
 # reward shaping
-use_com_reward: false
+target_velocity: 1.0          # Default is 0.0 (no target velocity)
 forward_reward_weight: 3.0  # Default is 1.0
 healthy_reward: 1.0          # Default is 1.0
 ctrl_cost_weight: 0.001     # Default is 0.001.
