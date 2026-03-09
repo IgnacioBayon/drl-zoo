@@ -359,18 +359,13 @@ def train_rainbow(cfg: DictConfig) -> None:
     multidiscrete: bool = cfg.env.action_multidiscrete
     if multidiscrete:
         num_branches = envs.single_action_space.shape[0]
-        action_bins = int(cfg.env.action_bins)
     else:
         num_branches = 1
         action_bins = int(envs.single_action_space.n)
 
     # -- networks & optimiser -------------------------------------------------
-    online = instantiate(
-        cfg.model, num_branches=num_branches, action_bins=action_bins
-    ).to(device)
-    target = instantiate(
-        cfg.model, num_branches=num_branches, action_bins=action_bins
-    ).to(device)
+    online = instantiate(cfg.model, num_branches=num_branches).to(device)
+    target = instantiate(cfg.model, num_branches=num_branches).to(device)
     target.load_state_dict(online.state_dict())
     target.eval()
 
