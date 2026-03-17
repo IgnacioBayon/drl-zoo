@@ -78,7 +78,7 @@ class PPO(nn.Module):
         """PPO Forward. Action outputs are represented as Gaussian distributions.
 
         Args:
-            x: _description_
+            x: Input vector (Observation image)
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

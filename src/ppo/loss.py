@@ -8,7 +8,7 @@ def _clip_loss(
     old_log_probs: torch.Tensor,
     advantages: torch.Tensor,
     epsilon: float = 0.2,
-):
+) -> torch.Tensor:
     """Loss function for PPO training
 
     Args:
@@ -16,6 +16,9 @@ def _clip_loss(
         old_log_probs: Log probabilities of the old policy
         advantages: Advantage estimates
         epsilon: Clipping parameter. Defaults to 0.2.
+
+    Returns:
+        torch.Tensor: Clipped policy loss
     """
     advantages = advantages.detach()
     old_log_probs = old_log_probs.detach()
