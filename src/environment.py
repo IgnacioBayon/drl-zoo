@@ -24,13 +24,15 @@ def build_envs(
     target_velocity: float = None,
     frozen_joints: list[int] | None = None,
     vectorized: bool = True,
+    discretize_actions: bool = True,
     **env_kwargs: dict,
 ):
     def wrap_env(env: gym.Env) -> gym.Env:
         if frozen_joints:
             env = FreezeJointsWrapper(env, frozen_joints)
         env = SmoothHopperWrapper(env, target_velocity)
-        env = DiscretizeAction(env, bins, multidiscrete)
+        if discretize_actions:
+            env = DiscretizeAction(env, bins, multidiscrete)
         if render_mode != "human":
             env = ImageObsWrapper(env, obs_size=obs_size)
         env = FrameStackObservation(env, stack_size)
@@ -68,6 +70,7 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
         # action space discretisation
         bins=env_cfg.action_bins,
         multidiscrete=env_cfg.action_multidiscrete,
+        discretize_actions=env_cfg.get("discretize_actions", True),
         # vectorised envs
         vectorized=mode == "train",
     )
