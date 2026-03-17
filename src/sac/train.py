@@ -306,7 +306,7 @@ def train_sac(cfg: DictConfig) -> None:
     device = get_device(cfg.train.device)
 
     # -- environment ----------------------------------------------------------
-    envs = build_from_config(cfg.env, mode="train")
+    envs = build_from_config(cfg.env, mode="train", discretize_actions=False)
 
     if not hasattr(envs.single_action_space, "shape"):
         raise ValueError("SAC requires a continuous Box action space.")

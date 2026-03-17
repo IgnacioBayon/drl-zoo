@@ -59,7 +59,7 @@ def build_envs(
         return wrap_env(gym.make(**all_env_kwargs))
 
 
-def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
+def build_from_config(env_cfg: DictConfig, mode: str = "train", discretize_actions: bool = True) -> gym.Env:
     kwargs: dict = dict(
         env_name=env_cfg.name,
         num_envs=env_cfg.num_envs,
@@ -70,7 +70,7 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train") -> gym.Env:
         # action space discretisation
         bins=env_cfg.action_bins,
         multidiscrete=env_cfg.action_multidiscrete,
-        discretize_actions=env_cfg.get("discretize_actions", True),
+        discretize_actions=discretize_actions,
         # vectorised envs
         vectorized=mode == "train",
     )
