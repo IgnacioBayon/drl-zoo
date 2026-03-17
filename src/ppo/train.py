@@ -157,9 +157,12 @@ def _train_loop(
         # ------------------------------------------------------------------ #
         # Storage tensors: shape [T, num_envs, ...]
         all_obs = torch.zeros(T, num_envs, *obs.shape[1:], device=device)
-        all_actions = torch.zeros(
-            T, num_envs, envs.single_action_space.shape[0], device=device
-        )
+        try:
+            num_actions = envs.single_action_space.shape[0]
+        except IndexError:
+            num_actions = int(envs.single_action_space.n)
+
+        all_actions = torch.zeros(T, num_envs, num_actions, device=device)
         all_log_probs = torch.zeros(T, num_envs, device=device)
         all_values = torch.zeros(T, num_envs, device=device)
         all_rewards = torch.zeros(T, num_envs, device=device)
@@ -359,7 +362,7 @@ def train_ppo(cfg: DictConfig) -> None:
         cfg.train.rollout_steps,
         cfg.train.num_epochs,
         cfg.train.minibatch_size,
-        cfg.env.action_dim,
+        cfg.env.action_bins,
     )
 
     elapsed, avg_fps = _train_loop(cfg, envs, policy, optimizer, device, writer)
