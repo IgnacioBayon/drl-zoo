@@ -128,16 +128,19 @@ def _train_loop(
     Returns:
         tuple[float, float]: (mean_eval_reward, total_training_time_seconds)
     """
+    tcfg = cfg.train
+    ecfg = cfg.env
+
     loss_fn = PPOLoss(
-        c1=cfg.loss.c1,
-        c2=cfg.loss.c2,
-        epsilon=cfg.loss.epsilon,
+        c1=tcfg.c1,
+        c2=tcfg.c2,
+        epsilon=tcfg.epsilon,
     )
 
     num_envs = envs.num_envs
-    T = cfg.train.rollout_steps
-    total_timesteps = cfg.train.total_timesteps
-    num_updates = math.ceil(total_timesteps / (num_envs * T))
+    T = tcfg.rollout_steps
+    total_frames = tcfg.total_frames
+    num_updates = math.ceil(total_frames / (num_envs * T))
 
     # --- Initialize environment ---
     obs, _ = envs.reset()
@@ -221,8 +224,8 @@ def _train_loop(
             values=values_bt,
             next_values=next_values_bt,
             dones=dones_bt,
-            gamma=cfg.train.gamma,
-            lam=cfg.train.lam,
+            gamma=tcfg.gamma,
+            lam=tcfg.lam,
         )
         returns_bt = advantages_bt + values_bt  # [num_envs, T]
 
@@ -245,13 +248,13 @@ def _train_loop(
         # 4. PPO UPDATE EPOCHS                                                 #
         # ------------------------------------------------------------------ #
         total_loss_accum = 0.0
-        num_minibatches = max(1, N // cfg.train.minibatch_size)
+        num_minibatches = max(1, N // tcfg.minibatch_size)
 
-        for epoch in range(cfg.train.num_epochs):
+        for epoch in range(tcfg.num_epochs):
             indices = torch.randperm(N, device=device)
 
-            for mb_start in range(0, N, cfg.train.minibatch_size):
-                mb_idx = indices[mb_start : mb_start + cfg.train.minibatch_size]
+            for mb_start in range(0, N, tcfg.minibatch_size):
+                mb_idx = indices[mb_start : mb_start + tcfg.minibatch_size]
 
                 batch = {
                     "obs": flat_obs[mb_idx],
@@ -267,14 +270,12 @@ def _train_loop(
                 total_loss_accum += loss.item()
 
                 # Gradient clipping (applied inside _train_step — see note below)
-                torch.nn.utils.clip_grad_norm_(
-                    policy.parameters(), cfg.train.max_grad_norm
-                )
+                torch.nn.utils.clip_grad_norm_(policy.parameters(), tcfg.max_grad_norm)
 
         # ------------------------------------------------------------------ #
         # 5. LOGGING                                                           #
         # ------------------------------------------------------------------ #
-        avg_loss = total_loss_accum / (cfg.train.num_epochs * num_minibatches)
+        avg_loss = total_loss_accum / (tcfg.num_epochs * num_minibatches)
         writer.add_scalar("train/loss", avg_loss, global_step)
         writer.add_scalar("train/global_step", global_step, update)
 
@@ -293,21 +294,33 @@ def _train_loop(
         # ------------------------------------------------------------------ #
         # 6. EVALUATION & CHECKPOINTING                                        #
         # ------------------------------------------------------------------ #
-        if update % cfg.train.eval_interval == 0:
+        def action_fn(obs: np.ndarray) -> np.ndarray:
+            """Helper to evaluate current policy on eval envs."""
+            obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device)
+            with torch.no_grad():
+                means, log_stds, _ = policy(obs_tensor)
+
+            return means.cpu().numpy()  # Use mean action for evaluation (deterministic)
+
+        if update % tcfg.eval_interval == 0:
             mean_eval_reward = evaluate_and_record(
                 policy=policy,
-                cfg=cfg,
+                action_fn=action_fn,
+                step=global_step,
+                env_cfg=ecfg,
+                video_dir=cfg.paths.video_dir,
                 device=device,
                 writer=writer,
-                global_step=global_step,
+                n_episodes=tcfg.eval_episodes,
             )
 
-        if update % cfg.train.checkpoint_interval == 0:
+        if update % tcfg.checkpoint_interval == 0:
             save_checkpoint(
-                policy=policy,
+                model=policy,
                 optimizer=optimizer,
-                update=update,
-                cfg=cfg,
+                global_step=global_step,
+                checkpoint_dir=cfg.paths.checkpoint_dir,
+                name=f"ppo_step_{global_step}.pt",
             )
 
     total_time = perf_counter() - t_start
