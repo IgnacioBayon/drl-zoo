@@ -7,7 +7,6 @@ import numpy as np
 import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig
-from torch.distributions import Normal
 from torch.utils.tensorboard import SummaryWriter
 
 from src.environment import build_from_config
@@ -52,7 +51,7 @@ def generalized_advantage_estimation(
 
 
 def _train_step(
-    model: PPO,
+    policy: PPO,
     loss_fn: PPOLoss,
     optimizer: torch.optim.Optimizer,
     batch: dict[str, torch.Tensor],
@@ -61,7 +60,7 @@ def _train_step(
     """Perform a single training step for PPO
 
     Args:
-        model: PPO model to be trained
+        policy: PPO policy to be trained
         loss_fn: Loss function for PPO training
         optimizer: Optimizer for updating model parameters
         batch: Batch of training data containing:
@@ -75,7 +74,7 @@ def _train_step(
     Returns:
         torch.Tensor: Loss value for the current training step
     """
-    model.train()
+    policy.train()
 
     obs = batch["obs"]
     actions = batch["actions"]
@@ -83,25 +82,20 @@ def _train_step(
     advantages = batch["advantages"]
     returns = batch["returns"]
 
-    action_means, action_log_stds, values = model(obs)
-    action_stds = torch.exp(action_log_stds)
-    action_dist = Normal(action_means, action_stds)
-
-    log_probs = action_dist.log_prob(actions).sum(dim=-1)
-    entropy = action_dist.entropy().sum(dim=-1)
+    log_probs, values, entropy = policy.evaluate(obs, actions)
 
     loss = loss_fn(
         log_probs=log_probs,
         old_log_probs=old_log_probs,
         advantages=advantages,
         returns=returns,
-        values=values.squeeze(-1),
+        values=values,
         entropy=entropy,
     )
 
     optimizer.zero_grad()
     loss.backward()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+    torch.nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
     optimizer.step()
 
     return loss.detach()
@@ -173,13 +167,7 @@ def _train_loop(
             for t in range(T):
                 all_obs[t] = obs
 
-                means, log_stds, value = policy(obs)
-                stds = torch.exp(log_stds)
-                dist = Normal(means, stds)
-
-                actions = dist.sample()
-                # Sum log_prob over action dims → scalar per env
-                log_probs = dist.log_prob(actions).sum(dim=-1)
+                actions, log_probs, value = policy.act(obs)
 
                 all_actions[t] = actions
                 all_log_probs[t] = log_probs
@@ -268,12 +256,9 @@ def _train_loop(
                 }
 
                 loss = _train_step(
-                    model=policy, loss_fn=loss_fn, optimizer=optimizer, batch=batch
+                    policy=policy, loss_fn=loss_fn, optimizer=optimizer, batch=batch
                 )
                 total_loss_accum += loss.item()
-
-                # Gradient clipping (applied inside _train_step — see note below)
-                torch.nn.utils.clip_grad_norm_(policy.parameters(), tcfg.max_grad_norm)
 
         # ------------------------------------------------------------------ #
         # 5. LOGGING                                                           #
@@ -365,6 +350,14 @@ def train_ppo(cfg: DictConfig) -> None:
         cfg.env.action_bins,
     )
 
-    elapsed, avg_fps = _train_loop(cfg, envs, policy, optimizer, device, writer)
+    mean_eval_reward, total_time = _train_loop(
+        cfg, envs, policy, optimizer, device, writer
+    )
+    avg_fps = (cfg.train.total_frames) / total_time
     writer.close()
-    log.info("Done -- %.1fs | avg FPS %.0f", elapsed, avg_fps)
+    log.info(
+        "Done -- %.1fs | avg FPS %.0f | Mean Eval Reward %.2f",
+        total_time,
+        avg_fps,
+        mean_eval_reward,
+    )

@@ -15,6 +15,7 @@ total_frames: 50_000_000
 # RL
 gamma: 0.99
 lam: 0.95
+total_frames: 50_000_000
 
 # evaluation
 eval_interval: 100_000
@@ -23,4 +24,3 @@ eval_episodes: 5
 # misc
 minibatch_size: 64
 num_epochs: 4
-max_grad_norm: 0.5

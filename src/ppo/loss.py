@@ -33,7 +33,7 @@ def _clip_loss(
 
 
 class PPOLoss(nn.Module):
-    """Loss function for PPO training
+    """Computes the clipped surrogate policy loss (L^CLIP) from the PPO paper.
 
     Attributes:
         c1: Coefficient for value loss
@@ -55,7 +55,7 @@ class PPOLoss(nn.Module):
         returns: torch.Tensor,
         values: torch.Tensor,
         entropy: torch.Tensor,
-    ):
+    ) -> torch.Tensor:
         clip_loss = _clip_loss(log_probs, old_log_probs, advantages, self.epsilon)
         value_loss = F.mse_loss(values, returns)
         entropy_loss = -entropy.mean()
