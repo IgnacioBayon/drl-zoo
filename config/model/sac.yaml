@@ -1,18 +1,11 @@
-_target_: src.sac.model.SACAgent
+actor:
+  _target_: src.sac.model.Actor
+  in_channels: ${env.stack_size}
+  action_dim: ???
+  hidden_dims: [256, 256]
 
-in_channels: ${env.stack_size}
-action_dim: ???                  # filled at runtime from env.action_space.shape[0]
-
-# shared image encoder
-feature_dim: 50
-encoder_channels: [32, 64, 64, 64]
-encoder_kernels: [3, 3, 3, 3]
-encoder_strides: [2, 1, 1, 1]
-
-# actor / critic MLP heads
-actor_hidden_dims: [1024, 1024]
-critic_hidden_dims: [1024, 1024]
-
-# SAC stochastic policy
-log_std_min: -10.0
-log_std_max: 2.0
+critic:
+  _target_: src.sac.model.DoubleCritic
+  in_channels: ${env.stack_size}
+  action_dim: ???
+  hidden_dims: [256, 256]

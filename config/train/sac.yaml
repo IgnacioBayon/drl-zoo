@@ -1,28 +1,28 @@
 device: auto   # auto | cpu | cuda
 
 # optimiser
-actor_lr: 1e-4
-critic_lr: 1e-4
-alpha_lr: 1e-4        # used only if automatic entropy tuning is enabled
+actor_lr: 3e-4
+critic_lr: 3e-4
+alpha_lr: 3e-4        # used only if automatic entropy tuning is enabled
 
 # RL
 gamma: 0.99
-tau: 0.01
-total_frames: 1_000_000
+tau: 0.005
+total_frames: 10_000_000
 
 # entropy regularisation
 alpha: 0.1
-auto_alpha: false
+auto_alpha: true
 target_entropy: null   # if null, use -action_dim
 
 # replay buffer
-buffer_size: 100_000
-batch_size: 128
-start_train_after: 5_000
+buffer_size: 300_000
+batch_size: 64
+start_train_after: 10_000
 
 # network updates
 train_every: 1
-gradient_steps: 1
+gradient_steps: 3
 target_update_every: 1
 max_grad_norm: null
 

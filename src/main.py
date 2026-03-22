@@ -8,10 +8,12 @@ from omegaconf import DictConfig
 
 from src.dqn.train_dqn import train_dqn
 from src.rainbow.train import train_rainbow
+from src.sac.train import train_sac
 
 _TRAINERS = {
     "dqn": train_dqn,
     "rainbow": train_rainbow,
+    "sac": train_sac,
 }
 
 
