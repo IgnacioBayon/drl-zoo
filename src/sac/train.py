@@ -77,9 +77,13 @@ def _train_step(
 
     critic_opt.zero_grad()
     critic_loss.backward()
+    torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=10.0)
     critic_opt.step()
 
     # -- actor update ---------------------------------------------------------
+    for p in critic.parameters():
+        p.requires_grad = False
+
     new_actions, logp = actor.sample(obs)
     q1_pi, q2_pi = critic(obs, new_actions)
     q_pi = torch.min(q1_pi, q2_pi)
@@ -87,7 +91,11 @@ def _train_step(
 
     actor_opt.zero_grad()
     actor_loss.backward()
+    torch.nn.utils.clip_grad_norm_(actor.parameters(), max_norm=10.0)
     actor_opt.step()
+
+    for p in critic.parameters():
+        p.requires_grad = True
 
     # -- target update --------------------------------------------------------
     _soft_update(critic, critic_target, tau)
@@ -133,9 +141,15 @@ def _train_loop(
 
     for step in range(1, steps + 1):
         # -- action selection --------------------------------------------------
-        with torch.no_grad():
-            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).div_(255.0)
-            actions = actor.act(obs_t, deterministic=False).cpu().numpy()
+        if len(replay_buffer) < start_train_after:
+            actions = np.stack(
+                [envs.single_action_space.sample() for _ in range(num_envs)],
+                axis=0,
+            ).astype(np.float32)
+        else:
+            with torch.no_grad():
+                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).div_(255.0)
+                actions = actor.act(obs_t, deterministic=False).cpu().numpy()
 
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         dones = np.logical_or(terminations, truncations)
@@ -169,7 +183,7 @@ def _train_loop(
             torch.as_tensor(actions, dtype=torch.float32),
             torch.as_tensor(rewards, dtype=torch.float32),
             torch.as_tensor(next_obs, dtype=torch.uint8),
-            torch.as_tensor(terminations.astype(np.float32), dtype=torch.float32),
+            torch.as_tensor(dones.astype(np.float32), dtype=torch.float32),
         )
 
         obs = next_obs
@@ -184,9 +198,10 @@ def _train_loop(
                 global_step // tcfg.train_every != prev_step // tcfg.train_every
             )
 
+        total_updates = n_updates * int(tcfg.gradient_steps)
         if (
             len(replay_buffer) >= max(start_train_after, tcfg.batch_size)
-            and n_updates > 0
+            and total_updates > 0
         ):
             for _ in range(n_updates):
                 actor_loss, critic_loss = _train_step(

@@ -6,13 +6,6 @@ from torch.distributions import Normal
 
 from src.encoder import Encoder
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-# exp(log_std) bounds for numerical stability and reasonable exploration in continuous action spaces
-LOG_STD_MIN = -20.0
-LOG_STD_MAX = 2.0
-
 
 # ---------------------------------------------------------------------------
 # MLP helper
@@ -51,8 +44,13 @@ class Actor(nn.Module):
         in_channels: int,
         action_dim: int,
         hidden_dims: list[int],
+        log_std_min: float = -10.0,
+        log_std_max: float = 2.0,
     ) -> None:
         super().__init__()
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+
         # Extracts visual features
         self.encoder = Encoder(in_channels)
         # Further processes latent features before outputting Gaussian parameters
@@ -75,7 +73,7 @@ class Actor(nn.Module):
         mu = self.mu_layer(h)
         log_std = self.log_std_layer(h)
         # Clamp log std to prevent numerical issues and ensure reasonable exploration
-        log_std = torch.clamp(log_std, LOG_STD_MIN, LOG_STD_MAX)
+        log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
         return mu, log_std
 
     def sample(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

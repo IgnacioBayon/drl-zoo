@@ -11,8 +11,8 @@ tau: 0.005
 total_frames: 10_000_000
 
 # entropy regularisation
-alpha: 0.1
-auto_alpha: true
+alpha: 0.05
+auto_alpha: false
 target_entropy: null   # if null, use -action_dim
 
 # replay buffer
