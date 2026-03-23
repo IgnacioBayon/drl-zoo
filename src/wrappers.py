@@ -170,6 +170,11 @@ class SmoothHopperWrapper(gym.RewardWrapper):
         self.target_velocity = target_velocity
         self.last_action = np.zeros(env.unwrapped.action_space.shape)
 
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self.last_action = np.zeros(self.env.unwrapped.action_space.shape)
+        return obs, info
+
     def reward(self, reward):
         velocity = self.env.unwrapped.data.qvel[0]
         velocity_reward = np.exp(-np.square(velocity - self.target_velocity))

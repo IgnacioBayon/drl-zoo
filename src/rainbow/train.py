@@ -350,7 +350,7 @@ def train_rainbow(cfg: DictConfig) -> None:
     """Build envs, networks, PER buffer, n-step accumulator and launch training.
 
     Args:
-        cfg: Full Hydra config (``env``, ``train``, ``model``, ``paths``).
+        cfg: Full Hydra config (``env``, ``train``, ``paths``).
     """
     device = get_device(cfg.train.device)
 
@@ -364,8 +364,8 @@ def train_rainbow(cfg: DictConfig) -> None:
         action_bins = int(envs.single_action_space.n)
 
     # -- networks & optimiser -------------------------------------------------
-    online = instantiate(cfg.model, num_branches=num_branches).to(device)
-    target = instantiate(cfg.model, num_branches=num_branches).to(device)
+    online = instantiate(cfg.train.model, num_branches=num_branches).to(device)
+    target = instantiate(cfg.train.model, num_branches=num_branches).to(device)
     target.load_state_dict(online.state_dict())
     target.eval()
 
@@ -400,7 +400,7 @@ def train_rainbow(cfg: DictConfig) -> None:
         cfg.env.num_envs,
         cfg.train.buffer_size,
         num_branches,
-        cfg.model.atoms,
+        cfg.train.model.atoms,
         cfg.train.n_step,
     )
 

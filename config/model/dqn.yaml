@@ -1,5 +1,0 @@
-_target_: src.dqn.model.DQNetwork
-
-in_channels: ${env.stack_size}
-action_bins: ${env.action_bins}
-num_branches: ???          # filled at runtime from env action space

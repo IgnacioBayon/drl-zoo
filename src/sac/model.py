@@ -44,12 +44,30 @@ class Actor(nn.Module):
         in_channels: int,
         action_dim: int,
         hidden_dims: list[int],
+        action_low: list[float] | torch.Tensor | None = None,
+        action_high: list[float] | torch.Tensor | None = None,
         log_std_min: float = -10.0,
         log_std_max: float = 2.0,
     ) -> None:
         super().__init__()
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
+
+        if action_low is None or action_high is None:
+            action_low_t = torch.full((action_dim,), -1.0, dtype=torch.float32)
+            action_high_t = torch.full((action_dim,), 1.0, dtype=torch.float32)
+        else:
+            action_low_t = torch.as_tensor(action_low, dtype=torch.float32)
+            action_high_t = torch.as_tensor(action_high, dtype=torch.float32)
+
+        if action_low_t.shape != (action_dim,) or action_high_t.shape != (action_dim,):
+            raise ValueError(
+                "action_low/action_high must have shape (action_dim,), "
+                f"got {tuple(action_low_t.shape)} and {tuple(action_high_t.shape)}"
+            )
+
+        self.register_buffer("action_scale", (action_high_t - action_low_t) / 2.0)
+        self.register_buffer("action_bias", (action_high_t + action_low_t) / 2.0)
 
         # Extracts visual features
         self.encoder = Encoder(in_channels)
@@ -86,14 +104,17 @@ class Actor(nn.Module):
         # Reparameterised sample for backpropagation: u = mu + std * eps, where eps ~ N(0, 1)
         u = dist.rsample()
         # Apply tanh squashing to ensure actions are in (-1, 1)
-        action = torch.tanh(u)
+        squashed = torch.tanh(u)
+        action = squashed * self.action_scale + self.action_bias
 
         # Compute log probability of the sampled action, accounting for tanh transformation
         log_prob = dist.log_prob(u)
         # When you sample from the Gaussian and then squash with tanh, the final action is no longer
         # Gaussian-distributed, so this corrects the log-probability after the transformation.
         # (See Appendix C of SAC paper for details on this correction)
-        log_prob -= torch.log(1 - action.pow(2) + 1e-6)
+        log_prob -= torch.log(1 - squashed.pow(2) + 1e-6)
+        # Affine transform from [-1, 1] to [low, high].
+        log_prob -= torch.log(self.action_scale + 1e-6)
         log_prob = log_prob.sum(dim=-1, keepdim=True)
 
         return action, log_prob
@@ -115,6 +136,7 @@ class Actor(nn.Module):
             u = dist.rsample()
             action = torch.tanh(u)
 
+        action = action * self.action_scale + self.action_bias
         return action.squeeze(0)
 
 

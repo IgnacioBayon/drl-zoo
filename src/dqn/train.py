@@ -297,7 +297,7 @@ def train_dqn(cfg: DictConfig) -> None:
     """Build envs, networks, buffer and launch the training loop.
 
     Args:
-        cfg: Full Hydra config with ``env``, ``train``, ``model``, ``paths`` groups.
+        cfg: Full Hydra config with ``env``, ``train``, and ``paths`` groups.
     """
     device = get_device(cfg.train.device)
 
@@ -313,10 +313,10 @@ def train_dqn(cfg: DictConfig) -> None:
 
     # -- networks & optimiser --------------------------------------------------
     policy = instantiate(
-        cfg.model, num_branches=num_branches, action_bins=action_bins
+        cfg.train.model, num_branches=num_branches, action_bins=action_bins
     ).to(device)
     target_policy = instantiate(
-        cfg.model, num_branches=num_branches, action_bins=action_bins
+        cfg.train.model, num_branches=num_branches, action_bins=action_bins
     ).to(device)
     target_policy.load_state_dict(policy.state_dict())
 

@@ -82,6 +82,7 @@ def run_eval_episode(
     device: torch.device,
     record: bool = False,
     seed: int | None = None,
+    discretize_actions: bool = True,
     env: object | None = None,
 ) -> tuple[float, float, int, list[np.ndarray]]:
     """Run one greedy episode and optionally capture full-resolution frames.
@@ -95,7 +96,11 @@ def run_eval_episode(
     """
     owns_env = env is None
     if owns_env:
-        env = build_from_config(env_cfg, mode="eval")
+        env = build_from_config(
+            env_cfg,
+            mode="eval",
+            discretize_actions=discretize_actions,
+        )
 
     obs, _ = env.reset(seed=seed)  # type: ignore[union-attr]
     frames: list[np.ndarray] = []
@@ -134,6 +139,7 @@ def evaluate_and_record(
     device: torch.device,
     writer: SummaryWriter,
     n_episodes: int,
+    discretize_actions: bool = True,
 ) -> tuple[float, float, float]:
     """Run *n_episodes* greedy evaluations and record the best episode.
 
@@ -145,7 +151,11 @@ def evaluate_and_record(
     """
     policy.eval()
 
-    eval_env = build_from_config(env_cfg, mode="eval")
+    eval_env = build_from_config(
+        env_cfg,
+        mode="eval",
+        discretize_actions=discretize_actions,
+    )
 
     returns = np.empty(n_episodes, dtype=np.float64)
     final_xs = np.empty(n_episodes, dtype=np.float64)
@@ -157,6 +167,7 @@ def evaluate_and_record(
             device,
             record=False,
             seed=int(step) + i,
+            discretize_actions=discretize_actions,
             env=eval_env,
         )
 
@@ -170,6 +181,7 @@ def evaluate_and_record(
         device,
         record=True,
         seed=int(step) + best_idx,
+        discretize_actions=discretize_actions,
         env=eval_env,
     )
     os.makedirs(video_dir, exist_ok=True)

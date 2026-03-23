@@ -53,8 +53,12 @@ def _train_step(
     gamma: float,
     tau: float,
     alpha: float,
+    log_alpha: torch.Tensor | None,
+    alpha_opt: torch.optim.Optimizer | None,
+    target_entropy: float | None,
+    max_grad_norm: float | None,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, float]:
     """Sample a batch and perform one SAC critic+actor update."""
     batch = replay_buffer.sample(batch_size)
 
@@ -65,11 +69,16 @@ def _train_step(
     dones = batch["dones"].to(device).unsqueeze(1)
 
     # -- critic target --------------------------------------------------------
+    if log_alpha is not None:
+        alpha_t = log_alpha.exp().detach()
+    else:
+        alpha_t = torch.tensor(alpha, device=device)
+
     with torch.no_grad():
         next_actions, next_logp = actor.sample(nxt)
         q1_next, q2_next = critic_target(nxt, next_actions)
         q_next = torch.min(q1_next, q2_next)
-        target_q = rewards + gamma * (1.0 - dones) * (q_next - alpha * next_logp)
+        target_q = rewards + gamma * (1.0 - dones) * (q_next - alpha_t * next_logp)
 
     # -- critic update --------------------------------------------------------
     q1, q2 = critic(obs, actions)
@@ -77,7 +86,8 @@ def _train_step(
 
     critic_opt.zero_grad()
     critic_loss.backward()
-    torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=10.0)
+    if max_grad_norm is not None:
+        torch.nn.utils.clip_grad_norm_(critic.parameters(), max_norm=max_grad_norm)
     critic_opt.step()
 
     # -- actor update ---------------------------------------------------------
@@ -87,11 +97,12 @@ def _train_step(
     new_actions, logp = actor.sample(obs)
     q1_pi, q2_pi = critic(obs, new_actions)
     q_pi = torch.min(q1_pi, q2_pi)
-    actor_loss = (alpha * logp - q_pi).mean()
+    actor_loss = (alpha_t * logp - q_pi).mean()
 
     actor_opt.zero_grad()
     actor_loss.backward()
-    torch.nn.utils.clip_grad_norm_(actor.parameters(), max_norm=10.0)
+    if max_grad_norm is not None:
+        torch.nn.utils.clip_grad_norm_(actor.parameters(), max_norm=max_grad_norm)
     actor_opt.step()
 
     for p in critic.parameters():
@@ -100,7 +111,17 @@ def _train_step(
     # -- target update --------------------------------------------------------
     _soft_update(critic, critic_target, tau)
 
-    return actor_loss.detach(), critic_loss.detach()
+    alpha_loss: torch.Tensor | None = None
+    if log_alpha is not None and alpha_opt is not None and target_entropy is not None:
+        alpha_loss = -(log_alpha * (logp.detach() + target_entropy)).mean()
+        alpha_opt.zero_grad()
+        alpha_loss.backward()
+        alpha_opt.step()
+        alpha_value = float(log_alpha.exp().item())
+    else:
+        alpha_value = float(alpha_t.item())
+
+    return actor_loss.detach(), critic_loss.detach(), alpha_loss.detach() if alpha_loss is not None else None, alpha_value
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +136,10 @@ def _train_loop(
     actor_opt: torch.optim.Optimizer,
     critic_opt: torch.optim.Optimizer,
     replay_buffer: ReplayBuffer,
+    log_alpha: torch.Tensor | None,
+    alpha_opt: torch.optim.Optimizer | None,
+    target_entropy: float | None,
+    fixed_alpha: float,
     device: torch.device,
     writer: SummaryWriter,
 ) -> tuple[float, float]:
@@ -133,6 +158,8 @@ def _train_loop(
     reward_window_sum = 0.0
     actor_losses: list[torch.Tensor] = []
     critic_losses: list[torch.Tensor] = []
+    alpha_losses: list[torch.Tensor] = []
+    alpha_values: list[float] = []
 
     start_train_after: int = int(tcfg.start_train_after)
 
@@ -203,8 +230,8 @@ def _train_loop(
             len(replay_buffer) >= max(start_train_after, tcfg.batch_size)
             and total_updates > 0
         ):
-            for _ in range(n_updates):
-                actor_loss, critic_loss = _train_step(
+            for _ in range(total_updates):
+                actor_loss, critic_loss, alpha_loss, alpha_value = _train_step(
                     actor=actor,
                     critic=critic,
                     critic_target=critic_target,
@@ -214,11 +241,18 @@ def _train_loop(
                     batch_size=int(tcfg.batch_size),
                     gamma=float(tcfg.gamma),
                     tau=float(tcfg.tau),
-                    alpha=float(tcfg.alpha),
+                    alpha=fixed_alpha,
+                    log_alpha=log_alpha,
+                    alpha_opt=alpha_opt,
+                    target_entropy=target_entropy,
+                    max_grad_norm=tcfg.max_grad_norm,
                     device=device,
                 )
                 actor_losses.append(actor_loss)
                 critic_losses.append(critic_loss)
+                alpha_values.append(alpha_value)
+                if alpha_loss is not None:
+                    alpha_losses.append(alpha_loss)
 
         # -- periodic evaluation & checkpoint ---------------------------------
         eval_info: str | None = None
@@ -239,6 +273,7 @@ def _train_loop(
                 device,
                 writer,
                 int(tcfg.eval_episodes),
+                discretize_actions=False,
             )
             eval_info = f"eval {mean_r:.2f}+/-{std_r:.2f}"
 
@@ -268,14 +303,23 @@ def _train_loop(
             avg_critic_loss = (
                 torch.stack(critic_losses).mean().item() if critic_losses else 0.0
             )
+            avg_alpha_loss = (
+                torch.stack(alpha_losses).mean().item() if alpha_losses else 0.0
+            )
+            avg_alpha = float(np.mean(alpha_values)) if alpha_values else fixed_alpha
             actor_losses.clear()
             critic_losses.clear()
+            alpha_losses.clear()
+            alpha_values.clear()
 
             elapsed = perf_counter() - start
             fps = global_step / elapsed
 
             writer.add_scalar("train/actor_loss", avg_actor_loss, global_step)
             writer.add_scalar("train/critic_loss", avg_critic_loss, global_step)
+            writer.add_scalar("train/alpha", avg_alpha, global_step)
+            if alpha_opt is not None:
+                writer.add_scalar("train/alpha_loss", avg_alpha_loss, global_step)
             writer.add_scalar("train/fps", fps, global_step)
             writer.add_scalar("train/buffer_size", len(replay_buffer), global_step)
 
@@ -287,7 +331,7 @@ def _train_loop(
             msg = (
                 f"step {step}/{steps} | frame {global_step}/{total_frames} | "
                 f"reward {avg_reward:.2f} | actor {avg_actor_loss:.4f} | "
-                f"critic {avg_critic_loss:.4f} | fps {fps:.0f}"
+                f"critic {avg_critic_loss:.4f} | alpha {avg_alpha:.4f} | fps {fps:.0f}"
             )
             if eval_info:
                 msg += f"  # {eval_info}"
@@ -330,19 +374,21 @@ def train_sac(cfg: DictConfig) -> None:
 
     # -- networks & optimiser -------------------------------------------------
     actor = instantiate(
-        cfg.model.actor,
+        cfg.train.model.actor,
         in_channels=cfg.env.stack_size,
         action_dim=action_dim,
+        action_low=envs.single_action_space.low.tolist(),
+        action_high=envs.single_action_space.high.tolist(),
     ).to(device)
 
     critic = instantiate(
-        cfg.model.critic,
+        cfg.train.model.critic,
         in_channels=cfg.env.stack_size,
         action_dim=action_dim,
     ).to(device)
 
     critic_target = instantiate(
-        cfg.model.critic,
+        cfg.train.model.critic,
         in_channels=cfg.env.stack_size,
         action_dim=action_dim,
     ).to(device)
@@ -351,6 +397,25 @@ def train_sac(cfg: DictConfig) -> None:
 
     actor_opt = torch.optim.Adam(actor.parameters(), lr=float(cfg.train.actor_lr))
     critic_opt = torch.optim.Adam(critic.parameters(), lr=float(cfg.train.critic_lr))
+
+    auto_alpha = bool(cfg.train.get("auto_alpha", False))
+    fixed_alpha = float(cfg.train.alpha)
+    log_alpha: torch.Tensor | None = None
+    alpha_opt: torch.optim.Optimizer | None = None
+    target_entropy: float | None = None
+    if auto_alpha:
+        target_entropy = float(
+            cfg.train.target_entropy
+            if cfg.train.target_entropy is not None
+            else -action_dim
+        )
+        log_alpha = torch.tensor(
+            np.log(max(fixed_alpha, 1e-6)),
+            dtype=torch.float32,
+            device=device,
+            requires_grad=True,
+        )
+        alpha_opt = torch.optim.Adam([log_alpha], lr=float(cfg.train.alpha_lr))
 
     # -- replay buffer --------------------------------------------------------
     obs_shape = (cfg.env.stack_size, cfg.env.obs_size, cfg.env.obs_size)
@@ -381,6 +446,10 @@ def train_sac(cfg: DictConfig) -> None:
         actor_opt=actor_opt,
         critic_opt=critic_opt,
         replay_buffer=replay_buffer,
+        log_alpha=log_alpha,
+        alpha_opt=alpha_opt,
+        target_entropy=target_entropy,
+        fixed_alpha=fixed_alpha,
         device=device,
         writer=writer,
     )

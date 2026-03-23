@@ -1,5 +1,13 @@
 device: auto   # auto | cpu | cuda
 
+# model
+model:
+  _target_: src.dqn.model.DQNetwork
+  in_channels: ${env.stack_size}
+  action_bins: ${env.action_bins}
+  num_branches: ???          # filled at runtime from env action space
+
+
 # loss
 loss_fn: huber  # mse | huber
 
@@ -29,3 +37,4 @@ max_grad_norm: 10.0           # clip gradient L2 norm
 eval_interval_frames: 100_000  # evaluate & record every N frames
 eval_episodes: 5             # number of greedy episodes per evaluation
 log_interval_frames: 10_000    # tensorboard scalar logging interval
+

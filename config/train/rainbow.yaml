@@ -1,5 +1,20 @@
 device: auto   # auto | cpu | cuda
 
+# model
+model:
+  _target_: src.rainbow.model.RainbowDQN
+  in_channels: ${env.stack_size}
+  action_bins: ${env.action_bins}
+  num_branches: ???          # filled at runtime from env action space
+  # C51 distributional support
+  atoms: 51
+  vmin: -10.0
+  vmax: 400.0
+  # NoisyNet initial sigma
+  noisy_sigma0: 0.5
+  # Dueling head hidden layer width
+  head_hidden_dim: 512
+
 # optimiser
 lr: 1e-4            # standard Rainbow lr (Hessel et al. 2017)
 

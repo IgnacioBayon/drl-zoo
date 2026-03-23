@@ -79,9 +79,8 @@ uv run python -m src.main train.total_frames=1_000_000 train.lr=3e-4
 Configurations are organized in the `config/` directory:
 
 - `config.yaml`: Main configuration entry (defaults, paths).
-- `train/`: Algorithm-specific training parameters (DQN, Rainbow, PPO...).
+- `train/`: Algorithm-specific training parameters and model definitions (DQN, Rainbow, SAC...).
 - `env/`: Environment-specific settings (resolution, reward shaping).
-- `model/`: Neural network architecture definitions.
 
 The `outputs/` folder stores logs, checkpoints, and videos for each run.
 

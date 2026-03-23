@@ -6,7 +6,7 @@ import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
-from src.dqn.train_dqn import train_dqn
+from src.dqn.train import train_dqn
 from src.rainbow.train import train_rainbow
 from src.sac.train import train_sac
 
