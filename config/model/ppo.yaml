@@ -1,5 +1,0 @@
-_target_: src.ppo.model.PPO
-
-in_channels: ${env.stack_size}
-action_dim: ${env.action_bins} # TODO(adri): no creo que sea action_bins
-

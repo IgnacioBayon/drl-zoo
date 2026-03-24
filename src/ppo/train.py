@@ -329,9 +329,10 @@ def train_ppo(cfg: DictConfig) -> None:
     # -- environment -----------------------------------------------------------
     envs = build_from_config(cfg.env, mode="train")
     num_envs: int = cfg.env.num_envs
+    action_dim = int(envs.single_action_space.shape[0])
 
     # -- network & optimizer ---------------------------------------------------
-    policy = instantiate(cfg.model).to(device)
+    policy = instantiate(cfg.train.model, action_dim=action_dim).to(device)
 
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.train.lr, eps=1e-5)
 
@@ -347,7 +348,7 @@ def train_ppo(cfg: DictConfig) -> None:
         cfg.train.rollout_steps,
         cfg.train.num_epochs,
         cfg.train.minibatch_size,
-        cfg.env.action_bins,
+        action_dim,
     )
 
     mean_eval_reward, total_time = _train_loop(

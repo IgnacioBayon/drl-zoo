@@ -1,5 +1,12 @@
 device: auto
 
+# model
+model:
+  _target_: src.ppo.model.PPO
+
+  in_channels: ${env.stack_size}
+  action_dim: ???
+
 # optimizer
 lr: 1e-5
 
