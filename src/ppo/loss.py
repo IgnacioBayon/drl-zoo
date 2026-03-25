@@ -58,7 +58,7 @@ class PPOLoss(nn.Module):
         entropy: torch.Tensor,
     ) -> torch.Tensor:
         clip_loss = _clip_loss(log_probs, old_log_probs, advantages, self.epsilon)
-        value_loss = F.mse_loss(values, returns)
+        value_loss = F.huber_loss(values, returns)
         entropy_loss = -entropy.mean()
 
         total_loss = clip_loss + self.c1 * value_loss + self.c2 * entropy_loss

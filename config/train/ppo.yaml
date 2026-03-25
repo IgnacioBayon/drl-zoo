@@ -6,6 +6,7 @@ model:
 
   in_channels: ${env.stack_size}
   action_dim: ???
+  share_encoder: false
 
 # PPO always uses continuous actions (no discretization wrapper)
 discretize_actions: false
@@ -26,5 +27,5 @@ clip_ratio: 0.2
 
 # ppo
 rollout_steps: 512
-batch_size: 256
+batch_size: 1024
 update_epochs: 4
