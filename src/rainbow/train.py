@@ -274,8 +274,8 @@ def _train_loop(
         # -- periodic evaluation & checkpoint ----------------------------------
         eval_info: str | None = None
         if (
-            global_step // tcfg.eval_interval_frames
-            != prev_step // tcfg.eval_interval_frames
+            global_step // cfg.eval_interval_frames
+            != prev_step // cfg.eval_interval_frames
         ):
 
             def action_fn(obs_t: torch.Tensor) -> np.ndarray | int:
@@ -290,7 +290,7 @@ def _train_loop(
                 cfg.paths.video_dir,
                 device,
                 writer,
-                tcfg.eval_episodes,
+                int(cfg.eval_episodes),
             )
             eval_info = f"eval {mean_r:.2f}+/-{std_r:.2f}"
             save_checkpoint(
@@ -303,8 +303,8 @@ def _train_loop(
 
         # -- tensorboard / console logging -------------------------------------
         if (
-            global_step // tcfg.log_interval_frames
-            != prev_step // tcfg.log_interval_frames
+            global_step // cfg.log_interval_frames
+            != prev_step // cfg.log_interval_frames
         ):
             if step_losses:
                 avg_loss = torch.stack(step_losses).mean().item()

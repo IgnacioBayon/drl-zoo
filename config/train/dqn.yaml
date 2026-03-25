@@ -33,8 +33,3 @@ train_every: 10                # gradient step every N env frames
 target_update_frames: 10_000  # hard copy policy → target (decoupled from eval interval)
 max_grad_norm: 10.0           # clip gradient L2 norm
 
-# logging / recording
-eval_interval_frames: 100_000  # evaluate & record every N frames
-eval_episodes: 5             # number of greedy episodes per evaluation
-log_interval_frames: 10_000    # tensorboard scalar logging interval
-

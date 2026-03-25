@@ -65,7 +65,14 @@ class Critic(nn.Module):
 
 
 class PPO(nn.Module):
-    def __init__(self, in_channels: int, action_dim: int, share_encoder: bool = True):
+    def __init__(
+        self,
+        in_channels: int,
+        action_dim: int,
+        share_encoder: bool = True,
+        action_low: list[float] | torch.Tensor | None = None,
+        action_high: list[float] | torch.Tensor | None = None,
+    ):
         super().__init__()
 
         self.share_encoder = share_encoder
@@ -79,6 +86,27 @@ class PPO(nn.Module):
 
         self.actor = Actor(self.actor_encoder.OUT_FEATURES, action_dim)
         self.critic = Critic(self.critic_encoder.OUT_FEATURES)
+
+        if action_low is None or action_high is None:
+            action_low_t = torch.full((action_dim,), -1.0, dtype=torch.float32)
+            action_high_t = torch.full((action_dim,), 1.0, dtype=torch.float32)
+        else:
+            action_low_t = torch.as_tensor(action_low, dtype=torch.float32)
+            action_high_t = torch.as_tensor(action_high, dtype=torch.float32)
+
+        if action_low_t.shape != (action_dim,) or action_high_t.shape != (action_dim,):
+            raise ValueError(
+                "action_low/action_high must have shape (action_dim,), "
+                f"got {tuple(action_low_t.shape)} and {tuple(action_high_t.shape)}"
+            )
+
+        self.register_buffer("action_scale", (action_high_t - action_low_t) / 2.0)
+        self.register_buffer("action_bias", (action_high_t + action_low_t) / 2.0)
+
+    @staticmethod
+    def _safe_atanh(x: torch.Tensor) -> torch.Tensor:
+        x = x.clamp(-1.0 + 1e-6, 1.0 - 1e-6)
+        return torch.atanh(x)
 
     def forward(
         self, x: torch.Tensor
@@ -120,10 +148,23 @@ class PPO(nn.Module):
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
 
-        action = dist.sample()
-        log_prob = dist.log_prob(action).sum(-1)
+        # Reparameterized sample from the base Gaussian, then tanh-squash into bounds.
+        u = dist.rsample()
+        squashed = torch.tanh(u)
+        action = squashed * self.action_scale + self.action_bias
+
+        log_prob = dist.log_prob(u)
+        log_prob -= torch.log(1 - squashed.pow(2) + 1e-6)
+        log_prob -= torch.log(self.action_scale + 1e-6)
+        log_prob = log_prob.sum(-1)
 
         return action, log_prob, value
+
+    @torch.no_grad()
+    def deterministic_action(self, x: torch.Tensor) -> torch.Tensor:
+        mean, _, _ = self.forward(x)
+        squashed = torch.tanh(mean)
+        return squashed * self.action_scale + self.action_bias
 
     def evaluate(
         self, x: torch.Tensor, actions: torch.Tensor
@@ -148,6 +189,16 @@ class PPO(nn.Module):
         """
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
-        log_prob = dist.log_prob(actions).sum(-1)
+
+        normalized_action = (actions - self.action_bias) / (self.action_scale + 1e-6)
+        normalized_action = normalized_action.clamp(-1.0 + 1e-6, 1.0 - 1e-6)
+        u = self._safe_atanh(normalized_action)
+
+        log_prob = dist.log_prob(u)
+        log_prob -= torch.log(1 - normalized_action.pow(2) + 1e-6)
+        log_prob -= torch.log(self.action_scale + 1e-6)
+        log_prob = log_prob.sum(-1)
+
+        # Entropy of the base Gaussian is a practical approximation for PPO bonus.
         entropy = dist.entropy().sum(-1)
         return log_prob, value, entropy

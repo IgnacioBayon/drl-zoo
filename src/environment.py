@@ -30,7 +30,10 @@ def build_envs(
     def wrap_env(env: gym.Env) -> gym.Env:
         if frozen_joints:
             env = FreezeJointsWrapper(env, frozen_joints)
-        env = SmoothHopperWrapper(env, target_velocity)
+        if target_velocity is not None:
+            env_id = getattr(getattr(env, "spec", None), "id", "")
+            if "Hopper" in env_id:
+                env = SmoothHopperWrapper(env, target_velocity)
         if discretize_actions:
             env = DiscretizeAction(env, bins, multidiscrete)
         if render_mode != "human":

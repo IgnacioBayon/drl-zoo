@@ -55,7 +55,7 @@ def _train_step(
     loss_fn: PPOLoss,
     optimizer: torch.optim.Optimizer,
     batch: dict[str, torch.Tensor],
-    max_grad_norm=0.5,
+    max_grad_norm: float | None = 0.5,
 ) -> torch.Tensor:
     """Perform a single training step for PPO
 
@@ -95,7 +95,8 @@ def _train_step(
 
     optimizer.zero_grad()
     loss.backward()
-    torch.nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
+    if max_grad_norm is not None:
+        torch.nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
     optimizer.step()
 
     return loss.detach()
@@ -138,25 +139,30 @@ def _train_loop(
 
     # --- Initialize environment ---
     obs, _ = envs.reset()
-    obs = torch.tensor(obs, dtype=torch.float32, device=device)
+    obs = torch.tensor(obs, dtype=torch.float32, device=device).div_(255.0)
 
-    episode_returns = deque(maxlen=100)
+    worker_returns = np.zeros(num_envs, dtype=np.float64)
+    worker_steps = np.zeros(num_envs, dtype=np.int64)
+    episode_returns: deque[float] = deque(maxlen=100)
+    reward_window_sum = 0.0
     global_step = 0
     mean_eval_reward = float("-inf")
     t_start = perf_counter()
 
     for update in range(1, num_updates + 1):
+        prev_step = global_step
+        eval_info: str | None = None
+
         # ------------------------------------------------------------------ #
         # 1. ROLLOUT COLLECTION                                                #
         # ------------------------------------------------------------------ #
         # Storage tensors: shape [T, num_envs, ...]
         all_obs = torch.zeros(T, num_envs, *obs.shape[1:], device=device)
-        try:
-            num_actions = envs.single_action_space.shape[0]
-        except IndexError:
-            num_actions = int(envs.single_action_space.n)
-
-        all_actions = torch.zeros(T, num_envs, num_actions, device=device)
+        action_shape = tuple(envs.single_action_space.shape)
+        if len(action_shape) == 0:
+            all_actions = torch.zeros(T, num_envs, device=device)
+        else:
+            all_actions = torch.zeros(T, num_envs, *action_shape, device=device)
         all_log_probs = torch.zeros(T, num_envs, device=device)
         all_values = torch.zeros(T, num_envs, device=device)
         all_rewards = torch.zeros(T, num_envs, device=device)
@@ -184,14 +190,40 @@ def _train_loop(
                 )
                 all_dones[t] = torch.tensor(dones, dtype=torch.float32, device=device)
 
-                obs = torch.tensor(obs_np, dtype=torch.float32, device=device)
-                global_step += num_envs
+                worker_returns += rewards.astype(np.float64)
+                worker_steps += 1
 
-                # Track completed episode returns
-                if "final_info" in infos:
-                    for info in infos["final_info"]:
-                        if info is not None and "episode" in info:
-                            episode_returns.append(info["episode"]["r"])
+                for i in np.where(dones)[0]:
+                    if len(episode_returns) == episode_returns.maxlen:
+                        reward_window_sum -= episode_returns[0]
+
+                    ret = float(worker_returns[i])
+                    reward_window_sum += ret
+                    episode_returns.append(ret)
+
+                    final_info = None
+                    if "final_info" in infos and infos["final_info"] is not None:
+                        final_info = infos["final_info"][i]
+
+                    if final_info is not None and "x_position" in final_info:
+                        final_x = float(final_info["x_position"])
+                    elif "x_position" in infos:
+                        final_x = float(infos["x_position"][i])
+                    else:
+                        final_x = 0.0
+
+                    ep_time = int(worker_steps[i]) * 0.008
+                    avg_speed = final_x / ep_time if ep_time > 0 else 0.0
+
+                    writer.add_scalar("episode/final_x", final_x, global_step)
+                    writer.add_scalar("episode/avg_speed", avg_speed, global_step)
+                    writer.add_scalar("episode/reward", ret, global_step)
+
+                    worker_returns[i] = 0.0
+                    worker_steps[i] = 0
+
+                obs = torch.tensor(obs_np, dtype=torch.float32, device=device).div_(255.0)
+                global_step += num_envs
 
             # Bootstrap value for the last step
             _, _, next_value = policy(obs)
@@ -239,7 +271,7 @@ def _train_loop(
         # 4. PPO UPDATE EPOCHS                                                 #
         # ------------------------------------------------------------------ #
         total_loss_accum = 0.0
-        num_minibatches = max(1, N // tcfg.minibatch_size)
+        total_minibatches = 0
 
         for epoch in range(tcfg.num_epochs):
             indices = torch.randperm(N, device=device)
@@ -256,42 +288,58 @@ def _train_loop(
                 }
 
                 loss = _train_step(
-                    policy=policy, loss_fn=loss_fn, optimizer=optimizer, batch=batch
+                    policy=policy,
+                    loss_fn=loss_fn,
+                    optimizer=optimizer,
+                    batch=batch,
+                    max_grad_norm=tcfg.max_grad_norm,
                 )
                 total_loss_accum += loss.item()
+                total_minibatches += 1
 
         # ------------------------------------------------------------------ #
         # 5. LOGGING                                                           #
         # ------------------------------------------------------------------ #
-        avg_loss = total_loss_accum / (tcfg.num_epochs * num_minibatches)
-        writer.add_scalar("train/loss", avg_loss, global_step)
-        writer.add_scalar("train/global_step", global_step, update)
+        avg_loss = total_loss_accum / max(1, total_minibatches)
+        if (
+            global_step // cfg.log_interval_frames
+            != prev_step // cfg.log_interval_frames
+        ):
+            elapsed = perf_counter() - t_start
+            fps = global_step / elapsed
+            avg_reward = 0.0
+            if episode_returns:
+                avg_reward = reward_window_sum / len(episode_returns)
 
-        if len(episode_returns) > 0:
-            mean_return = np.mean(episode_returns)
-            writer.add_scalar("train/mean_episode_return", mean_return, global_step)
-            log.info(
-                f"Update {update}/{num_updates} | step {global_step} | "
-                f"loss {avg_loss:.4f} | mean_return {mean_return:.2f}"
+            writer.add_scalar("train/loss", avg_loss, global_step)
+            writer.add_scalar("train/global_step", global_step, update)
+            writer.add_scalar("train/fps", fps, global_step)
+            if episode_returns:
+                writer.add_scalar("train/avg_reward_100", avg_reward, global_step)
+
+            msg = (
+                f"step {update}/{num_updates} | frame {global_step}/{total_frames} | "
+                f"reward {avg_reward:.2f} | loss {avg_loss:.4f} | fps {fps:.0f}"
             )
-        else:
-            log.info(
-                f"Update {update}/{num_updates} | step {global_step} | loss {avg_loss:.4f}"
-            )
+            if eval_info:
+                msg += f"  # {eval_info}"
+            log.info(msg)
 
         # ------------------------------------------------------------------ #
         # 6. EVALUATION & CHECKPOINTING                                        #
         # ------------------------------------------------------------------ #
-        def action_fn(obs: np.ndarray) -> np.ndarray:
+        def action_fn(obs: torch.Tensor) -> np.ndarray:
             """Helper to evaluate current policy on eval envs."""
-            obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device)
             with torch.no_grad():
-                means, log_stds, _ = policy(obs_tensor)
+                actions = policy.deterministic_action(obs)
 
-            return means.cpu().numpy()  # Use mean action for evaluation (deterministic)
+            return actions.squeeze(0).cpu().numpy()
 
-        if update % tcfg.eval_interval == 0:
-            mean_eval_reward = evaluate_and_record(
+        if (
+            global_step // cfg.eval_interval_frames
+            != prev_step // cfg.eval_interval_frames
+        ):
+            mean_eval_reward, std_eval_reward, _ = evaluate_and_record(
                 policy=policy,
                 action_fn=action_fn,
                 step=global_step,
@@ -299,10 +347,10 @@ def _train_loop(
                 video_dir=cfg.paths.video_dir,
                 device=device,
                 writer=writer,
-                n_episodes=tcfg.eval_episodes,
+                n_episodes=int(cfg.eval_episodes),
+                discretize_actions=False,
             )
-
-        if update % tcfg.checkpoint_interval == 0:
+            eval_info = f"eval {mean_eval_reward:.2f}+/-{std_eval_reward:.2f}"
             save_checkpoint(
                 model=policy,
                 optimizer=optimizer,
@@ -312,6 +360,7 @@ def _train_loop(
             )
 
     total_time = perf_counter() - t_start
+    envs.close()
     log.info(f"Training complete in {total_time:.1f}s")
     writer.close()
 
@@ -327,12 +376,17 @@ def train_ppo(cfg: DictConfig) -> None:
     device = get_device(cfg.train.device)
 
     # -- environment -----------------------------------------------------------
-    envs = build_from_config(cfg.env, mode="train")
+    envs = build_from_config(cfg.env, mode="train", discretize_actions=False)
     num_envs: int = cfg.env.num_envs
     action_dim = int(envs.single_action_space.shape[0])
 
     # -- network & optimizer ---------------------------------------------------
-    policy = instantiate(cfg.train.model, action_dim=action_dim).to(device)
+    policy = instantiate(
+        cfg.train.model,
+        action_dim=action_dim,
+        action_low=envs.single_action_space.low,
+        action_high=envs.single_action_space.high,
+    ).to(device)
 
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.train.lr, eps=1e-5)
 

@@ -118,6 +118,8 @@ def run_eval_episode(
                 / 255.0
             )
             action = action_fn(state_t)
+            if isinstance(action, np.ndarray) and action.ndim == 2 and action.shape[0] == 1:
+                action = action[0]
             obs, reward, terminated, truncated, _ = env.step(action)  # type: ignore[union-attr]
             total_reward += float(reward)
             ep_steps += 1

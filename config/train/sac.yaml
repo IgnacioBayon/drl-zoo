@@ -38,8 +38,3 @@ train_every: 1
 gradient_steps: 3
 target_update_every: 1
 max_grad_norm: null
-
-# logging / recording
-log_interval_frames: 10_000
-eval_interval_frames: 200_000
-eval_episodes: 5

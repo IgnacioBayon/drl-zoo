@@ -23,7 +23,8 @@ def _clip_loss(
     advantages = advantages.detach()
     old_log_probs = old_log_probs.detach()
 
-    policy_ratio = torch.exp(log_probs - old_log_probs)
+    log_ratio = (log_probs - old_log_probs).clamp(-20.0, 20.0)
+    policy_ratio = torch.exp(log_ratio)
 
     clipped_ratio = torch.clamp(policy_ratio, 1 - epsilon, 1 + epsilon)
 
