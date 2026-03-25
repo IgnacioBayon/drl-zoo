@@ -79,10 +79,11 @@ def save_checkpoint(
 def run_eval_episode(
     action_fn: ActionFn,
     env_cfg: DictConfig,
+    train_cfg: DictConfig,
     device: torch.device,
     record: bool = False,
     seed: int | None = None,
-    discretize_actions: bool = True,
+    force_discretize_actions: bool | None = None,
     env: object | None = None,
 ) -> tuple[float, float, int, list[np.ndarray]]:
     """Run one greedy episode and optionally capture full-resolution frames.
@@ -98,8 +99,9 @@ def run_eval_episode(
     if owns_env:
         env = build_from_config(
             env_cfg,
+            train_cfg,
             mode="eval",
-            discretize_actions=discretize_actions,
+            force_discretize_actions=force_discretize_actions,
         )
 
     obs, _ = env.reset(seed=seed)  # type: ignore[union-attr]
@@ -118,7 +120,11 @@ def run_eval_episode(
                 / 255.0
             )
             action = action_fn(state_t)
-            if isinstance(action, np.ndarray) and action.ndim == 2 and action.shape[0] == 1:
+            if (
+                isinstance(action, np.ndarray)
+                and action.ndim == 2
+                and action.shape[0] == 1
+            ):
                 action = action[0]
             obs, reward, terminated, truncated, _ = env.step(action)  # type: ignore[union-attr]
             total_reward += float(reward)
@@ -137,11 +143,12 @@ def evaluate_and_record(
     action_fn: ActionFn,
     step: int,
     env_cfg: DictConfig,
+    train_cfg: DictConfig,
     video_dir: str,
     device: torch.device,
     writer: SummaryWriter,
     n_episodes: int,
-    discretize_actions: bool = True,
+    force_discretize_actions: bool | None = None,
 ) -> tuple[float, float, float]:
     """Run *n_episodes* greedy evaluations and record the best episode.
 
@@ -155,8 +162,9 @@ def evaluate_and_record(
 
     eval_env = build_from_config(
         env_cfg,
+        train_cfg,
         mode="eval",
-        discretize_actions=discretize_actions,
+        force_discretize_actions=force_discretize_actions,
     )
 
     returns = np.empty(n_episodes, dtype=np.float64)
@@ -166,10 +174,11 @@ def evaluate_and_record(
         returns[i], final_xs[i], ep_steps[i], _ = run_eval_episode(
             action_fn,
             env_cfg,
+            train_cfg,
             device,
             record=False,
             seed=int(step) + i,
-            discretize_actions=discretize_actions,
+            force_discretize_actions=force_discretize_actions,
             env=eval_env,
         )
 
@@ -180,10 +189,11 @@ def evaluate_and_record(
     _, _, _, frames = run_eval_episode(
         action_fn,
         env_cfg,
+        train_cfg,
         device,
         record=True,
         seed=int(step) + best_idx,
-        discretize_actions=discretize_actions,
+        force_discretize_actions=force_discretize_actions,
         env=eval_env,
     )
     os.makedirs(video_dir, exist_ok=True)

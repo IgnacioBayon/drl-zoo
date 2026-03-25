@@ -5,6 +5,8 @@ from time import perf_counter
 
 import numpy as np
 import torch
+import torch.nn.functional as F
+from gymnasium.spaces import Box
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
@@ -16,6 +18,24 @@ from .loss import PPOLoss
 from .model import PPO
 
 log = logging.getLogger(__name__)
+
+
+def _random_crop_obs(obs: torch.Tensor, padding: int = 4) -> torch.Tensor:
+    """Apply a per-sample random crop while preserving the original tensor shape."""
+    if obs.ndim != 4 or padding <= 0:
+        return obs
+
+    batch_size, _, height, width = obs.shape
+    padded = F.pad(obs, (padding, padding, padding, padding), mode="replicate")
+    max_offset = 2 * padding
+    top = torch.randint(0, max_offset + 1, (batch_size,), device=obs.device)
+    left = torch.randint(0, max_offset + 1, (batch_size,), device=obs.device)
+
+    crops = [
+        padded[i, :, top[i] : top[i] + height, left[i] : left[i] + width]
+        for i in range(batch_size)
+    ]
+    return torch.stack(crops, dim=0)
 
 
 def generalized_advantage_estimation(
@@ -76,7 +96,7 @@ def _train_step(
     """
     policy.train()
 
-    obs = batch["obs"]
+    obs = _random_crop_obs(batch["obs"])
     actions = batch["actions"]
     old_log_probs = batch["old_log_probs"]
     advantages = batch["advantages"]
@@ -125,11 +145,15 @@ def _train_loop(
     """
     tcfg = cfg.train
     ecfg = cfg.env
+    clip_epsilon = float(tcfg.get("clip_ratio", 0.2))
+    gae_lambda = float(tcfg.get("gae_lamda", 0.95))
+    update_epochs = int(tcfg.get("update_epochs", 4))
+    minibatch_size = int(tcfg.get("batch_size", 64))
 
     loss_fn = PPOLoss(
         c1=tcfg.c1,
         c2=tcfg.c2,
-        epsilon=tcfg.epsilon,
+        epsilon=clip_epsilon,
     )
 
     num_envs = envs.num_envs
@@ -222,7 +246,9 @@ def _train_loop(
                     worker_returns[i] = 0.0
                     worker_steps[i] = 0
 
-                obs = torch.tensor(obs_np, dtype=torch.float32, device=device).div_(255.0)
+                obs = torch.tensor(obs_np, dtype=torch.float32, device=device).div_(
+                    255.0
+                )
                 global_step += num_envs
 
             # Bootstrap value for the last step
@@ -248,7 +274,7 @@ def _train_loop(
             next_values=next_values_bt,
             dones=dones_bt,
             gamma=tcfg.gamma,
-            lam=tcfg.lam,
+            lam=gae_lambda,
         )
         returns_bt = advantages_bt + values_bt  # [num_envs, T]
 
@@ -273,11 +299,11 @@ def _train_loop(
         total_loss_accum = 0.0
         total_minibatches = 0
 
-        for epoch in range(tcfg.num_epochs):
+        for epoch in range(update_epochs):
             indices = torch.randperm(N, device=device)
 
-            for mb_start in range(0, N, tcfg.minibatch_size):
-                mb_idx = indices[mb_start : mb_start + tcfg.minibatch_size]
+            for mb_start in range(0, N, minibatch_size):
+                mb_idx = indices[mb_start : mb_start + minibatch_size]
 
                 batch = {
                     "obs": flat_obs[mb_idx],
@@ -344,11 +370,12 @@ def _train_loop(
                 action_fn=action_fn,
                 step=global_step,
                 env_cfg=ecfg,
+                train_cfg=tcfg,
                 video_dir=cfg.paths.video_dir,
                 device=device,
                 writer=writer,
                 n_episodes=int(cfg.eval_episodes),
-                discretize_actions=False,
+                force_discretize_actions=False,
             )
             eval_info = f"eval {mean_eval_reward:.2f}+/-{std_eval_reward:.2f}"
             save_checkpoint(
@@ -375,8 +402,22 @@ def train_ppo(cfg: DictConfig) -> None:
     """
     device = get_device(cfg.train.device)
 
+    if bool(cfg.train.get("discretize_actions", False)):
+        raise ValueError(
+            "PPO requires continuous actions: set train.discretize_actions=false."
+        )
+
     # -- environment -----------------------------------------------------------
-    envs = build_from_config(cfg.env, mode="train", discretize_actions=False)
+    envs = build_from_config(
+        cfg.env,
+        cfg.train,
+        mode="train",
+        force_discretize_actions=False,
+    )
+
+    if not isinstance(envs.single_action_space, Box):
+        raise ValueError("PPO requires a continuous Box action space.")
+
     num_envs: int = cfg.env.num_envs
     action_dim = int(envs.single_action_space.shape[0])
 
@@ -400,8 +441,8 @@ def train_ppo(cfg: DictConfig) -> None:
         device,
         num_envs,
         cfg.train.rollout_steps,
-        cfg.train.num_epochs,
-        cfg.train.minibatch_size,
+        int(cfg.train.get("update_epochs", cfg.train.get("num_epochs", 4))),
+        int(cfg.train.get("batch_size", cfg.train.get("minibatch_size", 64))),
         action_dim,
     )
 

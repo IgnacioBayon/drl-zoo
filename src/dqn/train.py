@@ -99,7 +99,7 @@ def _train_loop(
     tcfg = cfg.train
     ecfg = cfg.env
     num_envs: int = ecfg.num_envs
-    multidiscrete: bool = ecfg.action_multidiscrete
+    multidiscrete: bool = bool(tcfg.action_multidiscrete)
 
     total_frames = int(tcfg.total_frames)
     steps = math.ceil(total_frames / num_envs)
@@ -234,6 +234,7 @@ def _train_loop(
                 action_fn,
                 global_step,
                 ecfg,
+                tcfg,
                 cfg.paths.video_dir,
                 device,
                 writer,
@@ -302,11 +303,11 @@ def train_dqn(cfg: DictConfig) -> None:
     device = get_device(cfg.train.device)
 
     # -- environment -----------------------------------------------------------
-    envs = build_from_config(cfg.env, mode="train")
-    multidiscrete: bool = cfg.env.action_multidiscrete
+    envs = build_from_config(cfg.env, cfg.train, mode="train")
+    multidiscrete: bool = bool(cfg.train.action_multidiscrete)
     if multidiscrete:
         num_branches = envs.single_action_space.shape[0]
-        action_bins = int(cfg.env.action_bins)
+        action_bins = int(cfg.train.action_bins)
     else:
         num_branches = 1
         action_bins = int(envs.single_action_space.n)  # bins ** num_joints

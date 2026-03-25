@@ -8,10 +8,6 @@ num_envs: 30
 obs_size: 64
 stack_size: 4
 
-# action discretisation
-action_bins: 3
-action_multidiscrete: false   # branching DQN
-
 # reward shaping
 target_velocity: 1.0          # Default is 0.0 (no target velocity)
 forward_reward_weight: 3.0  # Default is 1.0

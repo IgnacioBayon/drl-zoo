@@ -7,21 +7,24 @@ model:
   in_channels: ${env.stack_size}
   action_dim: ???
 
+# PPO always uses continuous actions (no discretization wrapper)
+discretize_actions: false
+
 # optimizer
 lr: 1e-4
 max_grad_norm: 0.5
 
 # RL
 gamma: 0.99
-lam: 0.95
+gae_lamda: 0.95
 total_frames: 50_000_000
 
 # PPO loss
 c1: 0.5 # Value loss coefficient
 c2: 0.01 # Entropy bonus coefficient
-epsilon: 0.2
+clip_ratio: 0.2
 
-# steps
-rollout_steps: 128
-minibatch_size: 64
-num_epochs: 4
+# ppo
+rollout_steps: 512
+batch_size: 256
+update_epochs: 4

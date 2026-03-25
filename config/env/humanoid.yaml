@@ -2,15 +2,11 @@ defaults:
   - _self_
 
 name: "Humanoid-v5"
-num_envs: 128
+num_envs: 16
 
 # observation
 obs_size: 96
 stack_size: 4
-
-# action discretisation
-action_bins: 3
-action_multidiscrete: true   # branching DQN
 
 # reward shaping
 target_velocity: 1.0

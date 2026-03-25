@@ -4,7 +4,7 @@ device: auto   # auto | cpu | cuda
 model:
   _target_: src.rainbow.model.RainbowDQN
   in_channels: ${env.stack_size}
-  action_bins: ${env.action_bins}
+  action_bins: ${train.action_bins}
   num_branches: ???          # filled at runtime from env action space
   # C51 distributional support
   atoms: 51
@@ -14,6 +14,11 @@ model:
   noisy_sigma0: 0.5
   # Dueling head hidden layer width
   head_hidden_dim: 512
+
+# action discretisation (algorithm-specific)
+discretize_actions: true
+action_bins: 3
+action_multidiscrete: false   # branching DQN
 
 # optimiser
 lr: 1e-4            # standard Rainbow lr (Hessel et al. 2017)

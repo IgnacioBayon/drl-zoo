@@ -10,6 +10,7 @@ from time import perf_counter
 import numpy as np
 import torch
 import torch.nn.functional as F
+from gymnasium.spaces import Box
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
@@ -121,7 +122,12 @@ def _train_step(
     else:
         alpha_value = float(alpha_t.item())
 
-    return actor_loss.detach(), critic_loss.detach(), alpha_loss.detach() if alpha_loss is not None else None, alpha_value
+    return (
+        actor_loss.detach(),
+        critic_loss.detach(),
+        alpha_loss.detach() if alpha_loss is not None else None,
+        alpha_value,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +181,9 @@ def _train_loop(
             ).astype(np.float32)
         else:
             with torch.no_grad():
-                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).div_(255.0)
+                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).div_(
+                    255.0
+                )
                 actions = actor.act(obs_t, deterministic=False).cpu().numpy()
 
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
@@ -269,11 +277,12 @@ def _train_loop(
                 action_fn,
                 global_step,
                 ecfg,
+                tcfg,
                 cfg.paths.video_dir,
                 device,
                 writer,
                 int(cfg.eval_episodes),
-                discretize_actions=False,
+                force_discretize_actions=False,
             )
             eval_info = f"eval {mean_r:.2f}+/-{std_r:.2f}"
 
@@ -364,10 +373,20 @@ def train_sac(cfg: DictConfig) -> None:
     """Build envs, networks, replay buffer and launch SAC training."""
     device = get_device(cfg.train.device)
 
-    # -- environment ----------------------------------------------------------
-    envs = build_from_config(cfg.env, mode="train", discretize_actions=False)
+    if bool(cfg.train.get("discretize_actions", False)):
+        raise ValueError(
+            "SAC requires continuous actions: set train.discretize_actions=false."
+        )
 
-    if not hasattr(envs.single_action_space, "shape"):
+    # -- environment ----------------------------------------------------------
+    envs = build_from_config(
+        cfg.env,
+        cfg.train,
+        mode="train",
+        force_discretize_actions=False,
+    )
+
+    if not isinstance(envs.single_action_space, Box):
         raise ValueError("SAC requires a continuous Box action space.")
 
     action_dim = int(envs.single_action_space.shape[0])

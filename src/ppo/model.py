@@ -1,20 +1,27 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Normal
 
 from src.encoder import Encoder
 
 
 class Actor(nn.Module):
-    """Simple MLP representing the PPO actor. Actions are continous"""
+    """Diagonal-Gaussian actor head for PPO."""
 
-    def __init__(self, state_dim: int, action_dim: int):
+    def __init__(
+        self,
+        state_dim: int,
+        action_dim: int,
+        hidden_sizes: tuple[int, int] = (512, 256),
+    ):
         super().__init__()
 
-        self.fc1 = nn.Linear(state_dim, 64)
-        self.fc2 = nn.Linear(64, 64)
+        h1, h2 = hidden_sizes
+        self.fc1 = nn.Linear(state_dim, h1)
+        self.fc2 = nn.Linear(h1, h2)
 
-        self.mean = nn.Linear(64, action_dim)
+        self.mean = nn.Linear(h2, action_dim)
         self.log_std = nn.Parameter(torch.zeros(action_dim))
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -28,25 +35,26 @@ class Actor(nn.Module):
                 Tensors are [mean, log_std], each of shape [B, action_dim]
         """
 
-        x = torch.tanh(self.fc1(x))
-        x = torch.tanh(self.fc2(x))
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
 
         mean = self.mean(x)
 
-        log_std = self.log_std.expand_as(mean).clamp(-20, 2)
+        log_std = self.log_std.expand_as(mean).clamp(-5, 2)
 
         return mean, log_std
 
 
 class Critic(nn.Module):
-    """Simple MLP representing the PPO Critic"""
+    """Value-function head for PPO."""
 
-    def __init__(self, state_dim: int):
+    def __init__(self, state_dim: int, hidden_sizes: tuple[int, int] = (512, 256)):
         super().__init__()
 
-        self.fc1 = nn.Linear(state_dim, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 1)
+        h1, h2 = hidden_sizes
+        self.fc1 = nn.Linear(state_dim, h1)
+        self.fc2 = nn.Linear(h1, h2)
+        self.fc3 = nn.Linear(h2, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Critic forward method. Outputs a given state's value.
@@ -58,8 +66,8 @@ class Critic(nn.Module):
             torch.Tensor: State value
         """
 
-        x = torch.tanh(self.fc1(x))
-        x = torch.tanh(self.fc2(x))
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
 
         return self.fc3(x).squeeze(-1)
 
@@ -70,6 +78,8 @@ class PPO(nn.Module):
         in_channels: int,
         action_dim: int,
         share_encoder: bool = True,
+        actor_hidden_sizes: tuple[int, int] = (512, 256),
+        critic_hidden_sizes: tuple[int, int] = (512, 256),
         action_low: list[float] | torch.Tensor | None = None,
         action_high: list[float] | torch.Tensor | None = None,
     ):
@@ -84,8 +94,15 @@ class PPO(nn.Module):
             self.actor_encoder = Encoder(in_channels)
             self.critic_encoder = Encoder(in_channels)
 
-        self.actor = Actor(self.actor_encoder.OUT_FEATURES, action_dim)
-        self.critic = Critic(self.critic_encoder.OUT_FEATURES)
+        self.actor = Actor(
+            self.actor_encoder.OUT_FEATURES,
+            action_dim,
+            hidden_sizes=actor_hidden_sizes,
+        )
+        self.critic = Critic(
+            self.critic_encoder.OUT_FEATURES,
+            hidden_sizes=critic_hidden_sizes,
+        )
 
         if action_low is None or action_high is None:
             action_low_t = torch.full((action_dim,), -1.0, dtype=torch.float32)
@@ -100,13 +117,8 @@ class PPO(nn.Module):
                 f"got {tuple(action_low_t.shape)} and {tuple(action_high_t.shape)}"
             )
 
-        self.register_buffer("action_scale", (action_high_t - action_low_t) / 2.0)
-        self.register_buffer("action_bias", (action_high_t + action_low_t) / 2.0)
-
-    @staticmethod
-    def _safe_atanh(x: torch.Tensor) -> torch.Tensor:
-        x = x.clamp(-1.0 + 1e-6, 1.0 - 1e-6)
-        return torch.atanh(x)
+        self.register_buffer("action_low", action_low_t)
+        self.register_buffer("action_high", action_high_t)
 
     def forward(
         self, x: torch.Tensor
@@ -131,74 +143,29 @@ class PPO(nn.Module):
         return means, log_stds, value
 
     def act(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Sample an action from the policy. Used during rollout collection.
-
-        Samples from the Gaussian policy and computes the log probability of
-        the sampled action (summed over action dimensions).
-
-        Args:
-            x: Observation image, shape [B, in_channels, H, W].
-
-        Returns:
-            action: Sampled action, shape [B, action_dim].
-            log_prob: Log probability of the sampled action, shape [B].
-                Summed over action dimensions (factored Gaussian assumption).
-            value: State value estimate, shape [B].
-        """
+        """Sample an action from a diagonal Gaussian policy for PPO rollouts."""
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
 
-        # Reparameterized sample from the base Gaussian, then tanh-squash into bounds.
-        u = dist.rsample()
-        squashed = torch.tanh(u)
-        action = squashed * self.action_scale + self.action_bias
-
-        log_prob = dist.log_prob(u)
-        log_prob -= torch.log(1 - squashed.pow(2) + 1e-6)
-        log_prob -= torch.log(self.action_scale + 1e-6)
-        log_prob = log_prob.sum(-1)
+        action = dist.sample()
+        action = torch.clamp(action, self.action_low, self.action_high)
+        log_prob = dist.log_prob(action).sum(-1)
 
         return action, log_prob, value
 
     @torch.no_grad()
     def deterministic_action(self, x: torch.Tensor) -> torch.Tensor:
         mean, _, _ = self.forward(x)
-        squashed = torch.tanh(mean)
-        return squashed * self.action_scale + self.action_bias
+        return torch.clamp(mean, self.action_low, self.action_high)
 
     def evaluate(
         self, x: torch.Tensor, actions: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Evaluate stored actions under the current policy. Used during the update step.
-
-        Re-computes log probabilities and entropy for actions that were collected
-        during a previous rollout, which is needed to calculate the PPO clipped
-        surrogate loss and the entropy bonus.
-
-        Args:
-            x: Observation images, shape [B, in_channels, H, W].
-            actions: Previously sampled actions to evaluate, shape [B, action_dim].
-
-        Returns:
-            log_prob: Log probability of the given actions under the current policy,
-                shape [B]. Summed over action dimensions.
-            value: State value estimates under the current critic, shape [B].
-            entropy: Differential entropy of the current policy distribution,
-                shape [B]. Summed over action dimensions. Used as a bonus in the
-                loss to encourage exploration.
-        """
+        """Evaluate stored rollout actions under the current Gaussian policy."""
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
 
-        normalized_action = (actions - self.action_bias) / (self.action_scale + 1e-6)
-        normalized_action = normalized_action.clamp(-1.0 + 1e-6, 1.0 - 1e-6)
-        u = self._safe_atanh(normalized_action)
-
-        log_prob = dist.log_prob(u)
-        log_prob -= torch.log(1 - normalized_action.pow(2) + 1e-6)
-        log_prob -= torch.log(self.action_scale + 1e-6)
-        log_prob = log_prob.sum(-1)
-
-        # Entropy of the base Gaussian is a practical approximation for PPO bonus.
+        clipped_actions = torch.clamp(actions, self.action_low, self.action_high)
+        log_prob = dist.log_prob(clipped_actions).sum(-1)
         entropy = dist.entropy().sum(-1)
         return log_prob, value, entropy

@@ -24,7 +24,7 @@ def build_envs(
     target_velocity: float = None,
     frozen_joints: list[int] | None = None,
     vectorized: bool = True,
-    discretize_actions: bool = True,
+    discretize_actions: bool = False,
     **env_kwargs: dict,
 ):
     def wrap_env(env: gym.Env) -> gym.Env:
@@ -62,7 +62,18 @@ def build_envs(
         return wrap_env(gym.make(**all_env_kwargs))
 
 
-def build_from_config(env_cfg: DictConfig, mode: str = "train", discretize_actions: bool = True) -> gym.Env:
+def build_from_config(
+    env_cfg: DictConfig,
+    train_cfg: DictConfig,
+    mode: str = "train",
+    force_discretize_actions: bool | None = None,
+) -> gym.Env:
+    use_discretize_actions = (
+        bool(train_cfg.get("discretize_actions", False))
+        if force_discretize_actions is None
+        else bool(force_discretize_actions)
+    )
+
     kwargs: dict = dict(
         env_name=env_cfg.name,
         num_envs=env_cfg.num_envs,
@@ -71,12 +82,17 @@ def build_from_config(env_cfg: DictConfig, mode: str = "train", discretize_actio
         obs_size=env_cfg.obs_size,
         stack_size=env_cfg.stack_size,
         # action space discretisation
-        bins=env_cfg.action_bins,
-        multidiscrete=env_cfg.action_multidiscrete,
-        discretize_actions=discretize_actions,
+        bins=int(train_cfg.get("action_bins", 0)),
+        multidiscrete=bool(train_cfg.get("action_multidiscrete", False)),
+        discretize_actions=use_discretize_actions,
         # vectorised envs
         vectorized=mode == "train",
     )
+
+    if use_discretize_actions and train_cfg.get("action_bins") is None:
+        raise ValueError(
+            "Action discretization is enabled but train.action_bins is missing."
+        )
     # Reward shaping
     if env_cfg.get("forward_reward_weight") is not None:
         kwargs["forward_reward_weight"] = env_cfg.forward_reward_weight
