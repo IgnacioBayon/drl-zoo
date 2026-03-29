@@ -190,4 +190,4 @@ class SmoothHopperWrapper(gym.RewardWrapper):
             - (self.env.unwrapped._ctrl_cost_weight * action_smoothness_penalty)
         )
 
-        return new_reward
+        return float(np.clip(new_reward, -10.0, 10.0))

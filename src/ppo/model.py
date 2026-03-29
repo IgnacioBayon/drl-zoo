@@ -6,6 +6,14 @@ from torch.distributions import Normal
 from src.encoder import Encoder
 
 
+def _init_orthogonal(layer: nn.Module, gain: float) -> None:
+    """Apply orthogonal initialization with zero bias to linear/conv layers."""
+    if isinstance(layer, (nn.Linear, nn.Conv2d)):
+        nn.init.orthogonal_(layer.weight, gain=gain)
+        if layer.bias is not None:
+            nn.init.constant_(layer.bias, 0.0)
+
+
 class Actor(nn.Module):
     """Diagonal-Gaussian actor head for PPO."""
 
@@ -13,16 +21,17 @@ class Actor(nn.Module):
         self,
         state_dim: int,
         action_dim: int,
-        hidden_sizes: tuple[int, int] = (512, 256),
+        hidden_dim: int = 512,
     ):
         super().__init__()
 
-        h1, h2 = hidden_sizes
-        self.fc1 = nn.Linear(state_dim, h1)
-        self.fc2 = nn.Linear(h1, h2)
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
 
-        self.mean = nn.Linear(h2, action_dim)
+        self.mean = nn.Linear(hidden_dim, action_dim)
         self.log_std = nn.Parameter(torch.zeros(action_dim))
+
+        _init_orthogonal(self.fc1, gain=2**0.5)
+        _init_orthogonal(self.mean, gain=0.01)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Actor forward method. Outputs a gaussian distribution for each action dim.
@@ -36,7 +45,6 @@ class Actor(nn.Module):
         """
 
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
 
         mean = self.mean(x)
 
@@ -48,13 +56,14 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     """Value-function head for PPO."""
 
-    def __init__(self, state_dim: int, hidden_sizes: tuple[int, int] = (512, 256)):
+    def __init__(self, state_dim: int, hidden_dim: int = 512):
         super().__init__()
 
-        h1, h2 = hidden_sizes
-        self.fc1 = nn.Linear(state_dim, h1)
-        self.fc2 = nn.Linear(h1, h2)
-        self.fc3 = nn.Linear(h2, 1)
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, 1)
+
+        _init_orthogonal(self.fc1, gain=2**0.5)
+        _init_orthogonal(self.fc2, gain=1.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Critic forward method. Outputs a given state's value.
@@ -67,9 +76,8 @@ class Critic(nn.Module):
         """
 
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
 
-        return self.fc3(x).squeeze(-1)
+        return self.fc2(x).squeeze(-1)
 
 
 class PPO(nn.Module):
@@ -78,8 +86,8 @@ class PPO(nn.Module):
         in_channels: int,
         action_dim: int,
         share_encoder: bool = True,
-        actor_hidden_sizes: tuple[int, int] = (512, 256),
-        critic_hidden_sizes: tuple[int, int] = (512, 256),
+        actor_hidden_dim: int = 512,
+        critic_hidden_dim: int = 512,
         action_low: list[float] | torch.Tensor | None = None,
         action_high: list[float] | torch.Tensor | None = None,
     ):
@@ -97,12 +105,16 @@ class PPO(nn.Module):
         self.actor = Actor(
             self.actor_encoder.OUT_FEATURES,
             action_dim,
-            hidden_sizes=actor_hidden_sizes,
+            hidden_dim=actor_hidden_dim,
         )
         self.critic = Critic(
             self.critic_encoder.OUT_FEATURES,
-            hidden_sizes=critic_hidden_sizes,
+            hidden_dim=critic_hidden_dim,
         )
+
+        self.actor_encoder.apply(lambda m: _init_orthogonal(m, gain=2**0.5))
+        if not self.share_encoder:
+            self.critic_encoder.apply(lambda m: _init_orthogonal(m, gain=2**0.5))
 
         if action_low is None or action_high is None:
             action_low_t = torch.full((action_dim,), -1.0, dtype=torch.float32)

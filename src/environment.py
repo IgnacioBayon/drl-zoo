@@ -111,6 +111,8 @@ def build_from_config(
         kwargs["healthy_angle_range"] = tuple(env_cfg.healthy_angle_range)
     if env_cfg.get("reset_noise_scale") is not None:
         kwargs["reset_noise_scale"] = env_cfg.reset_noise_scale
+    if env_cfg.get("frame_skip") is not None:
+        kwargs["frame_skip"] = int(env_cfg.frame_skip)
     if env_cfg.get("xml_file") is not None:
         kwargs["xml_file"] = env_cfg.xml_file
     if env_cfg.get("max_episode_steps") is not None:

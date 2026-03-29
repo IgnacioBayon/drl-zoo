@@ -21,21 +21,23 @@ log = logging.getLogger(__name__)
 
 
 def _random_crop_obs(obs: torch.Tensor, padding: int = 4) -> torch.Tensor:
-    """Apply a per-sample random crop while preserving the original tensor shape."""
     if obs.ndim != 4 or padding <= 0:
         return obs
 
-    batch_size, _, height, width = obs.shape
+    batch_size, channels, height, width = obs.shape
     padded = F.pad(obs, (padding, padding, padding, padding), mode="replicate")
     max_offset = 2 * padding
+    
     top = torch.randint(0, max_offset + 1, (batch_size,), device=obs.device)
     left = torch.randint(0, max_offset + 1, (batch_size,), device=obs.device)
 
-    crops = [
-        padded[i, :, top[i] : top[i] + height, left[i] : left[i] + width]
-        for i in range(batch_size)
-    ]
-    return torch.stack(crops, dim=0)
+    # Vectorized advanced indexing
+    batch_idx = torch.arange(batch_size, device=obs.device).view(-1, 1, 1, 1)
+    c_idx = torch.arange(channels, device=obs.device).view(1, -1, 1, 1)
+    y_idx = torch.arange(height, device=obs.device).view(1, 1, -1, 1) + top.view(-1, 1, 1, 1)
+    x_idx = torch.arange(width, device=obs.device).view(1, 1, 1, -1) + left.view(-1, 1, 1, 1)
+
+    return padded[batch_idx, c_idx, y_idx, x_idx]
 
 
 def generalized_advantage_estimation(
@@ -76,7 +78,7 @@ def _train_step(
     optimizer: torch.optim.Optimizer,
     batch: dict[str, torch.Tensor],
     max_grad_norm: float | None = 0.5,
-) -> torch.Tensor:
+) -> dict[str, torch.Tensor]:
     """Perform a single training step for PPO
 
     Args:
@@ -96,22 +98,36 @@ def _train_step(
     """
     policy.train()
 
-    obs = _random_crop_obs(batch["obs"])
+    obs = batch["obs"].to(dtype=torch.float32).div_(255.0)
+    obs = _random_crop_obs(obs)
     actions = batch["actions"]
     old_log_probs = batch["old_log_probs"]
+    old_values = batch["old_values"]
     advantages = batch["advantages"]
     returns = batch["returns"]
 
     log_probs, values, entropy = policy.evaluate(obs, actions)
 
-    loss = loss_fn(
+    actor_loss, critic_loss, entropy_loss, loss = loss_fn.compute_terms(
         log_probs=log_probs,
         old_log_probs=old_log_probs,
         advantages=advantages,
         returns=returns,
         values=values,
+        old_values=old_values,
         entropy=entropy,
     )
+    approx_kl = (old_log_probs.detach() - log_probs.detach()).mean()
+
+    if not torch.isfinite(loss):
+        optimizer.zero_grad(set_to_none=True)
+        return {
+            "loss": loss.detach(),
+            "actor_loss": actor_loss.detach(),
+            "critic_loss": critic_loss.detach(),
+            "entropy_loss": entropy_loss.detach(),
+            "kl": approx_kl.detach(),
+        }
 
     optimizer.zero_grad()
     loss.backward()
@@ -119,7 +135,13 @@ def _train_step(
         torch.nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
     optimizer.step()
 
-    return loss.detach()
+    return {
+        "loss": loss.detach(),
+        "actor_loss": actor_loss.detach(),
+        "critic_loss": critic_loss.detach(),
+        "entropy_loss": entropy_loss.detach(),
+        "kl": approx_kl.detach(),
+    }
 
 
 def _train_loop(
@@ -149,11 +171,13 @@ def _train_loop(
     gae_lambda = float(tcfg.get("gae_lamda", 0.95))
     update_epochs = int(tcfg.get("update_epochs", 4))
     minibatch_size = int(tcfg.get("batch_size", 64))
+    target_kl = float(tcfg.get("target_kl", 0.015))
 
     loss_fn = PPOLoss(
         c1=tcfg.c1,
         c2=tcfg.c2,
         epsilon=clip_epsilon,
+        value_clip=float(tcfg.get("value_clip", 0.2)),
     )
 
     num_envs = envs.num_envs
@@ -163,7 +187,7 @@ def _train_loop(
 
     # --- Initialize environment ---
     obs, _ = envs.reset()
-    obs = torch.tensor(obs, dtype=torch.float32, device=device).div_(255.0)
+    obs = torch.as_tensor(obs, dtype=torch.uint8, device=device)
 
     worker_returns = np.zeros(num_envs, dtype=np.float64)
     worker_steps = np.zeros(num_envs, dtype=np.int64)
@@ -181,7 +205,13 @@ def _train_loop(
         # 1. ROLLOUT COLLECTION                                                #
         # ------------------------------------------------------------------ #
         # Storage tensors: shape [T, num_envs, ...]
-        all_obs = torch.zeros(T, num_envs, *obs.shape[1:], device=device)
+        all_obs = torch.zeros(
+            T,
+            num_envs,
+            *obs.shape[1:],
+            device=device,
+            dtype=torch.uint8,
+        )
         action_shape = tuple(envs.single_action_space.shape)
         if len(action_shape) == 0:
             all_actions = torch.zeros(T, num_envs, device=device)
@@ -190,14 +220,15 @@ def _train_loop(
         all_log_probs = torch.zeros(T, num_envs, device=device)
         all_values = torch.zeros(T, num_envs, device=device)
         all_rewards = torch.zeros(T, num_envs, device=device)
-        all_dones = torch.zeros(T, num_envs, device=device)
+        all_terminated = torch.zeros(T, num_envs, device=device)
 
         policy.eval()
         with torch.no_grad():
             for t in range(T):
                 all_obs[t] = obs
 
-                actions, log_probs, value = policy.act(obs)
+                obs_input = obs.to(dtype=torch.float32).div(255.0)
+                actions, log_probs, value = policy.act(obs_input)
 
                 all_actions[t] = actions
                 all_log_probs[t] = log_probs
@@ -212,7 +243,9 @@ def _train_loop(
                 all_rewards[t] = torch.tensor(
                     rewards, dtype=torch.float32, device=device
                 )
-                all_dones[t] = torch.tensor(dones, dtype=torch.float32, device=device)
+                all_terminated[t] = torch.tensor(
+                    terminated, dtype=torch.float32, device=device
+                )
 
                 worker_returns += rewards.astype(np.float64)
                 worker_steps += 1
@@ -246,13 +279,12 @@ def _train_loop(
                     worker_returns[i] = 0.0
                     worker_steps[i] = 0
 
-                obs = torch.tensor(obs_np, dtype=torch.float32, device=device).div_(
-                    255.0
-                )
+                obs = torch.as_tensor(obs_np, dtype=torch.uint8, device=device)
                 global_step += num_envs
 
             # Bootstrap value for the last step
-            _, _, next_value = policy(obs)
+            obs_input = obs.to(dtype=torch.float32).div(255.0)
+            _, _, next_value = policy(obs_input)
             next_value = next_value.squeeze(-1)  # [num_envs]
 
         # ------------------------------------------------------------------ #
@@ -261,7 +293,7 @@ def _train_loop(
         # Shapes expected by GAE: [B, T] — we use [num_envs, T]
         rewards_bt = all_rewards.T  # [num_envs, T]
         values_bt = all_values.T  # [num_envs, T]
-        dones_bt = all_dones.T  # [num_envs, T]
+        dones_bt = all_terminated.T  # [num_envs, T]
 
         # next_values[b, t] = values[b, t+1], with bootstrap at t=T
         next_values_bt = torch.cat(
@@ -290,6 +322,7 @@ def _train_loop(
         flat_obs = all_obs.view(N, *obs.shape[1:])
         flat_actions = all_actions.view(N, -1)
         flat_log_probs = all_log_probs.view(N)
+        flat_values = all_values.view(N)
         flat_advantages = advantages_bt.T.reshape(N)
         flat_returns = returns_bt.T.reshape(N)
 
@@ -297,10 +330,17 @@ def _train_loop(
         # 4. PPO UPDATE EPOCHS                                                 #
         # ------------------------------------------------------------------ #
         total_loss_accum = 0.0
+        actor_loss_accum = 0.0
+        critic_loss_accum = 0.0
+        entropy_loss_accum = 0.0
+        kl_accum = 0.0
         total_minibatches = 0
+        early_stop_epoch: int | None = None
+        early_stop_kl: float | None = None
 
         for epoch in range(update_epochs):
             indices = torch.randperm(N, device=device)
+            stop_update = False
 
             for mb_start in range(0, N, minibatch_size):
                 mb_idx = indices[mb_start : mb_start + minibatch_size]
@@ -309,24 +349,42 @@ def _train_loop(
                     "obs": flat_obs[mb_idx],
                     "actions": flat_actions[mb_idx],
                     "old_log_probs": flat_log_probs[mb_idx],
+                    "old_values": flat_values[mb_idx],
                     "advantages": flat_advantages[mb_idx],
                     "returns": flat_returns[mb_idx],
                 }
 
-                loss = _train_step(
+                metrics = _train_step(
                     policy=policy,
                     loss_fn=loss_fn,
                     optimizer=optimizer,
                     batch=batch,
                     max_grad_norm=tcfg.max_grad_norm,
                 )
-                total_loss_accum += loss.item()
+                total_loss_accum += metrics["loss"].item()
+                actor_loss_accum += metrics["actor_loss"].item()
+                critic_loss_accum += metrics["critic_loss"].item()
+                entropy_loss_accum += metrics["entropy_loss"].item()
+                kl_accum += metrics["kl"].item()
                 total_minibatches += 1
+
+                if metrics["kl"].item() > target_kl:
+                    early_stop_epoch = epoch + 1
+                    early_stop_kl = metrics["kl"].item()
+                    stop_update = True
+                    break
+
+            if stop_update:
+                break
 
         # ------------------------------------------------------------------ #
         # 5. LOGGING                                                           #
         # ------------------------------------------------------------------ #
         avg_loss = total_loss_accum / max(1, total_minibatches)
+        avg_actor_loss = actor_loss_accum / max(1, total_minibatches)
+        avg_critic_loss = critic_loss_accum / max(1, total_minibatches)
+        avg_entropy_loss = entropy_loss_accum / max(1, total_minibatches)
+        avg_kl = kl_accum / max(1, total_minibatches)
         if (
             global_step // cfg.log_interval_frames
             != prev_step // cfg.log_interval_frames
@@ -338,6 +396,10 @@ def _train_loop(
                 avg_reward = reward_window_sum / len(episode_returns)
 
             writer.add_scalar("train/loss", avg_loss, global_step)
+            writer.add_scalar("train/actor_loss", avg_actor_loss, global_step)
+            writer.add_scalar("train/critic_loss", avg_critic_loss, global_step)
+            writer.add_scalar("train/entropy_loss", avg_entropy_loss, global_step)
+            writer.add_scalar("train/approx_kl", avg_kl, global_step)
             writer.add_scalar("train/global_step", global_step, update)
             writer.add_scalar("train/fps", fps, global_step)
             if episode_returns:
@@ -345,8 +407,15 @@ def _train_loop(
 
             msg = (
                 f"step {update}/{num_updates} | frame {global_step}/{total_frames} | "
-                f"reward {avg_reward:.2f} | loss {avg_loss:.4f} | fps {fps:.0f}"
+                f"reward {avg_reward:.2f} | loss {avg_loss:.4f} | "
+                f"actor {avg_actor_loss:.4f} | critic {avg_critic_loss:.4f} | "
+                f"entropy {avg_entropy_loss:.4f} | kl {avg_kl:.6f} | fps {fps:.0f}"
             )
+            if early_stop_epoch is not None and early_stop_kl is not None:
+                msg += (
+                    f" | early_stop_kl {early_stop_kl:.6f} "
+                    f"(epoch {early_stop_epoch}/{update_epochs})"
+                )
             if eval_info:
                 msg += f"  # {eval_info}"
             log.info(msg)
