@@ -27,15 +27,19 @@ def _random_crop_obs(obs: torch.Tensor, padding: int = 4) -> torch.Tensor:
     batch_size, channels, height, width = obs.shape
     padded = F.pad(obs, (padding, padding, padding, padding), mode="replicate")
     max_offset = 2 * padding
-    
+
     top = torch.randint(0, max_offset + 1, (batch_size,), device=obs.device)
     left = torch.randint(0, max_offset + 1, (batch_size,), device=obs.device)
 
     # Vectorized advanced indexing
     batch_idx = torch.arange(batch_size, device=obs.device).view(-1, 1, 1, 1)
     c_idx = torch.arange(channels, device=obs.device).view(1, -1, 1, 1)
-    y_idx = torch.arange(height, device=obs.device).view(1, 1, -1, 1) + top.view(-1, 1, 1, 1)
-    x_idx = torch.arange(width, device=obs.device).view(1, 1, 1, -1) + left.view(-1, 1, 1, 1)
+    y_idx = torch.arange(height, device=obs.device).view(1, 1, -1, 1) + top.view(
+        -1, 1, 1, 1
+    )
+    x_idx = torch.arange(width, device=obs.device).view(1, 1, 1, -1) + left.view(
+        -1, 1, 1, 1
+    )
 
     return padded[batch_idx, c_idx, y_idx, x_idx]
 
@@ -168,7 +172,7 @@ def _train_loop(
     tcfg = cfg.train
     ecfg = cfg.env
     clip_epsilon = float(tcfg.get("clip_ratio", 0.2))
-    gae_lambda = float(tcfg.get("gae_lamda", 0.95))
+    gae_lambda = float(tcfg.get("gae_lambda", 0.95))
     update_epochs = int(tcfg.get("update_epochs", 4))
     minibatch_size = int(tcfg.get("batch_size", 64))
     target_kl = float(tcfg.get("target_kl", 0.015))

@@ -26,11 +26,13 @@ class Actor(nn.Module):
         super().__init__()
 
         self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
 
         self.mean = nn.Linear(hidden_dim, action_dim)
         self.log_std = nn.Parameter(torch.zeros(action_dim))
 
         _init_orthogonal(self.fc1, gain=2**0.5)
+        _init_orthogonal(self.fc2, gain=2**0.5)
         _init_orthogonal(self.mean, gain=0.01)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -45,6 +47,7 @@ class Actor(nn.Module):
         """
 
         x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
 
         mean = self.mean(x)
 
@@ -60,10 +63,12 @@ class Critic(nn.Module):
         super().__init__()
 
         self.fc1 = nn.Linear(state_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, 1)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, 1)
 
         _init_orthogonal(self.fc1, gain=2**0.5)
-        _init_orthogonal(self.fc2, gain=1.0)
+        _init_orthogonal(self.fc2, gain=2**0.5)
+        _init_orthogonal(self.fc3, gain=1.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Critic forward method. Outputs a given state's value.
@@ -76,8 +81,8 @@ class Critic(nn.Module):
         """
 
         x = F.relu(self.fc1(x))
-
-        return self.fc2(x).squeeze(-1)
+        x = F.relu(self.fc2(x))
+        return self.fc3(x).squeeze(-1)
 
 
 class PPO(nn.Module):
@@ -92,7 +97,6 @@ class PPO(nn.Module):
         action_high: list[float] | torch.Tensor | None = None,
     ):
         super().__init__()
-
         self.share_encoder = share_encoder
 
         if share_encoder:
@@ -132,20 +136,34 @@ class PPO(nn.Module):
         self.register_buffer("action_low", action_low_t)
         self.register_buffer("action_high", action_high_t)
 
+    def _squash(
+        self, raw: torch.Tensor, dist: Normal
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Tanh-squash a pre-activation sample and return the corrected log-prob.
+
+        Transforms an unbounded Gaussian sample u into a bounded action a:
+            squashed  = tanh(u)                          → (-1, 1)
+            action    = low + 0.5*(high-low)*(squashed+1) → [low, high]
+
+        Log-prob correction (change-of-variables for tanh):
+            log π(a) = log π(u) − Σ log(1 − tanh²(u))
+        """
+        squashed = torch.tanh(raw)  # (-1, 1)
+
+        # Numerically stable correction: log(1 - tanh²(u)) = log(sech²(u))
+        log_prob = dist.log_prob(raw) - torch.log1p(-squashed.pow(2) + 1e-6)
+        log_prob = log_prob.sum(-1)  # sum over action dims → scalar per sample
+
+        # Linear rescale from (-1, 1) to (action_low, action_high)
+        action = self.action_low + 0.5 * (self.action_high - self.action_low) * (
+            squashed + 1.0
+        )
+
+        return action, log_prob
+
     def forward(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """PPO Forward. Action outputs are represented as Gaussian distributions.
-
-        Args:
-            x: Input vector (Observation image)
-
-        Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-                Action means (shape: [B, action_dim]),
-                Action log stds (shape: [B, action_dim]),
-                and state value (shape: [B])
-        """
         actor_latent = self.actor_encoder(x)
         critic_latent = self.critic_encoder(x)
 
@@ -159,16 +177,19 @@ class PPO(nn.Module):
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
 
-        action = dist.sample()
-        action = torch.clamp(action, self.action_low, self.action_high)
-        log_prob = dist.log_prob(action).sum(-1)
+        raw = dist.sample()
+        action, log_prob = self._squash(raw, dist)
 
         return action, log_prob, value
 
     @torch.no_grad()
     def deterministic_action(self, x: torch.Tensor) -> torch.Tensor:
         mean, _, _ = self.forward(x)
-        return torch.clamp(mean, self.action_low, self.action_high)
+
+        squashed = torch.tanh(mean)
+        return self.action_low + 0.5 * (self.action_high - self.action_low) * (
+            squashed + 1.0
+        )
 
     def evaluate(
         self, x: torch.Tensor, actions: torch.Tensor
@@ -177,7 +198,19 @@ class PPO(nn.Module):
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
 
-        clipped_actions = torch.clamp(actions, self.action_low, self.action_high)
-        log_prob = dist.log_prob(clipped_actions).sum(-1)
+        # Step 1: undo linear rescale [low, high] → (-1, 1)
+        squashed = (actions - self.action_low) / (
+            0.5 * (self.action_high - self.action_low)
+        ) - 1.0
+        # Step 2: clamp to avoid atanh(±1) = ±inf at exact boundaries
+        squashed = squashed.clamp(-1 + 1e-6, 1 - 1e-6)
+        # Step 3: recover pre-tanh sample
+        raw = torch.atanh(squashed)
+
+        log_prob = dist.log_prob(raw) - torch.log1p(-squashed.pow(2) + 1e-6)
+        log_prob = log_prob.sum(-1)
+
+        # Entropy of the base Gaussian (standard PPO approximation)
         entropy = dist.entropy().sum(-1)
+
         return log_prob, value, entropy
