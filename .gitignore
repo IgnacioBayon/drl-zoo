@@ -211,3 +211,8 @@ __marimo__/
 
 # --- OWN IGNORES ---
 outputs/
+
+# Report files
+report/*
+!report/dqn_rainbow.tex
+!report/references.bib
