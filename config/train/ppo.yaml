@@ -22,12 +22,12 @@ total_frames: 50_000_000
 
 # PPO loss
 c1: 0.5 # Value loss coefficient
-c2: 0   # Entropy bonus coefficient
+c2: 0.01   # Entropy bonus coefficient
 clip_ratio: 0.2
 target_kl: 0.02
 value_clip: 0.2
 
 # ppo
 rollout_steps: 2048
-batch_size: 1024
+batch_size: 256
 update_epochs: 10

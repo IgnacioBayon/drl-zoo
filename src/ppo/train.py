@@ -121,7 +121,10 @@ def _train_step(
         old_values=old_values,
         entropy=entropy,
     )
-    approx_kl = (old_log_probs.detach() - log_probs.detach()).mean()
+
+    # FIX: sign was previously flipped (old - new). Correct is (new - old),
+    # which is positive when the policy moves away from the old one.
+    approx_kl = (log_probs.detach() - old_log_probs.detach()).mean()
 
     if not torch.isfinite(loss):
         optimizer.zero_grad(set_to_none=True)
@@ -225,6 +228,10 @@ def _train_loop(
         all_values = torch.zeros(T, num_envs, device=device)
         all_rewards = torch.zeros(T, num_envs, device=device)
         all_terminated = torch.zeros(T, num_envs, device=device)
+        all_truncated = torch.zeros(T, num_envs, device=device)
+        # FIX: stores the correct next-state value at each timestep,
+        # overriding with the true final-state value when an env is truncated.
+        all_next_values = torch.zeros(T, num_envs, device=device)
 
         policy.eval()
         with torch.no_grad():
@@ -250,6 +257,25 @@ def _train_loop(
                 all_terminated[t] = torch.tensor(
                     terminated, dtype=torch.float32, device=device
                 )
+                all_truncated[t] = torch.tensor(
+                    truncated, dtype=torch.float32, device=device
+                )
+
+                # FIX: for truncated envs, bootstrap from the true final
+                # observation (before the auto-reset) instead of the reset
+                # state that will appear in obs_np. Gymnasium stores this
+                # in infos["final_observation"][i] automatically.
+                next_vals_t = value.squeeze(-1).clone()
+                for i in np.where(truncated)[0]:
+                    final_obs_i = infos["final_observation"][i]
+                    fo = (
+                        torch.as_tensor(final_obs_i, dtype=torch.float32, device=device)
+                        .unsqueeze(0)
+                        .div(255.0)
+                    )
+                    _, _, v_final = policy(fo)
+                    next_vals_t[i] = v_final.squeeze()
+                all_next_values[t] = next_vals_t
 
                 worker_returns += rewards.astype(np.float64)
                 worker_steps += 1
@@ -299,9 +325,10 @@ def _train_loop(
         values_bt = all_values.T  # [num_envs, T]
         dones_bt = all_terminated.T  # [num_envs, T]
 
-        # next_values[b, t] = values[b, t+1], with bootstrap at t=T
+        # FIX: use all_next_values (which has correct truncation bootstraps)
+        # instead of shifting values_bt, which used the post-reset state value.
         next_values_bt = torch.cat(
-            [values_bt[:, 1:], next_value.unsqueeze(1)], dim=1
+            [all_next_values.T[:, :-1], next_value.unsqueeze(1)], dim=1
         )  # [num_envs, T]
 
         advantages_bt = generalized_advantage_estimation(

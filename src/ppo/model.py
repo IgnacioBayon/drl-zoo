@@ -136,31 +136,6 @@ class PPO(nn.Module):
         self.register_buffer("action_low", action_low_t)
         self.register_buffer("action_high", action_high_t)
 
-    def _squash(
-        self, raw: torch.Tensor, dist: Normal
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Tanh-squash a pre-activation sample and return the corrected log-prob.
-
-        Transforms an unbounded Gaussian sample u into a bounded action a:
-            squashed  = tanh(u)                          → (-1, 1)
-            action    = low + 0.5*(high-low)*(squashed+1) → [low, high]
-
-        Log-prob correction (change-of-variables for tanh):
-            log π(a) = log π(u) − Σ log(1 − tanh²(u))
-        """
-        squashed = torch.tanh(raw)  # (-1, 1)
-
-        # Numerically stable correction: log(1 - tanh²(u)) = log(sech²(u))
-        log_prob = dist.log_prob(raw) - torch.log1p(-squashed.pow(2) + 1e-6)
-        log_prob = log_prob.sum(-1)  # sum over action dims → scalar per sample
-
-        # Linear rescale from (-1, 1) to (action_low, action_high)
-        action = self.action_low + 0.5 * (self.action_high - self.action_low) * (
-            squashed + 1.0
-        )
-
-        return action, log_prob
-
     def forward(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -173,13 +148,14 @@ class PPO(nn.Module):
         return means, log_stds, value
 
     def act(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Sample an action from a diagonal Gaussian policy for PPO rollouts."""
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
-
-        raw = dist.sample()
-        action, log_prob = self._squash(raw, dist)
-
+        action = dist.sample()
+        log_prob = dist.log_prob(action).sum(-1)
+        # Clip to action bounds without log-prob correction (standard PPO)
+        action = action.clamp(
+            self.action_low.unsqueeze(0), self.action_high.unsqueeze(0)
+        )
         return action, log_prob, value
 
     @torch.no_grad()
@@ -194,23 +170,8 @@ class PPO(nn.Module):
     def evaluate(
         self, x: torch.Tensor, actions: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Evaluate stored rollout actions under the current Gaussian policy."""
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
-
-        # Step 1: undo linear rescale [low, high] → (-1, 1)
-        squashed = (actions - self.action_low) / (
-            0.5 * (self.action_high - self.action_low)
-        ) - 1.0
-        # Step 2: clamp to avoid atanh(±1) = ±inf at exact boundaries
-        squashed = squashed.clamp(-1 + 1e-6, 1 - 1e-6)
-        # Step 3: recover pre-tanh sample
-        raw = torch.atanh(squashed)
-
-        log_prob = dist.log_prob(raw) - torch.log1p(-squashed.pow(2) + 1e-6)
-        log_prob = log_prob.sum(-1)
-
-        # Entropy of the base Gaussian (standard PPO approximation)
+        log_prob = dist.log_prob(actions).sum(-1)
         entropy = dist.entropy().sum(-1)
-
         return log_prob, value, entropy
