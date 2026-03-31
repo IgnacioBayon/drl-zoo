@@ -136,6 +136,12 @@ class PPO(nn.Module):
         self.register_buffer("action_low", action_low_t)
         self.register_buffer("action_high", action_high_t)
 
+        action_scale = 0.5 * (action_high_t - action_low_t)
+        action_bias = 0.5 * (action_high_t + action_low_t)
+
+        self.register_buffer("action_scale", action_scale)
+        self.register_buffer("action_bias", action_bias)
+
     def forward(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -147,31 +153,82 @@ class PPO(nn.Module):
 
         return means, log_stds, value
 
+    def _squash_action(self, pre_tanh_action: torch.Tensor) -> torch.Tensor:
+        """
+        Map unconstrained Gaussian sample to valid env action range.
+        pre_tanh_action: (-inf, inf)
+        tanh(pre_tanh_action): [-1, 1]
+        affine map: [-1, 1] -> [action_low, action_high]
+        """
+        squashed = torch.tanh(pre_tanh_action)
+        return squashed * self.action_scale.unsqueeze(0) + self.action_bias.unsqueeze(0)
+
+    def _squashed_log_prob(
+        self,
+        dist: Normal,
+        pre_tanh_action: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Log-prob of the final squashed action using change-of-variables correction.
+        """
+        log_prob = dist.log_prob(pre_tanh_action).sum(-1)
+
+        squashed = torch.tanh(pre_tanh_action)
+        correction = torch.log(
+            self.action_scale.unsqueeze(0) * (1.0 - squashed.pow(2)) + 1e-6
+        ).sum(-1)
+
+        return log_prob - correction
+
     def act(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Sample action during training rollout.
+        Returns:
+            action: action actually sent to env
+            log_prob: log-prob of that exact action under current policy
+            value: V(s)
+        """
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
-        action = dist.sample()
-        log_prob = dist.log_prob(action).sum(-1)
-        # Clip to action bounds without log-prob correction (standard PPO)
-        action = action.clamp(
-            self.action_low.unsqueeze(0), self.action_high.unsqueeze(0)
-        )
+
+        pre_tanh_action = dist.rsample()
+        action = self._squash_action(pre_tanh_action)
+        log_prob = self._squashed_log_prob(dist, pre_tanh_action)
+
         return action, log_prob, value
 
     @torch.no_grad()
     def deterministic_action(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Deterministic eval action: same action transform as training,
+        but use the mean instead of sampling.
+        """
         mean, _, _ = self.forward(x)
-
-        squashed = torch.tanh(mean)
-        return self.action_low + 0.5 * (self.action_high - self.action_low) * (
-            squashed + 1.0
-        )
+        return self._squash_action(mean)
 
     def evaluate(
         self, x: torch.Tensor, actions: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Recompute log_prob and value for PPO update.
+        'actions' are already in env action space [low, high], so we invert the
+        squash+scale transform before computing corrected log-prob.
+        """
         mean, log_std, value = self.forward(x)
         dist = Normal(mean, log_std.exp())
-        log_prob = dist.log_prob(actions).sum(-1)
+
+        # invert affine map [low, high] -> [-1, 1]
+        y = (actions - self.action_bias.unsqueeze(0)) / (
+            self.action_scale.unsqueeze(0) + 1e-6
+        )
+        y = y.clamp(-0.999999, 0.999999)
+
+        # invert tanh
+        pre_tanh_action = torch.atanh(y)
+
+        log_prob = self._squashed_log_prob(dist, pre_tanh_action)
+
+        # approximate entropy metric; base Gaussian entropy is commonly used here
         entropy = dist.entropy().sum(-1)
+
         return log_prob, value, entropy

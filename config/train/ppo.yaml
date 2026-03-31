@@ -12,7 +12,7 @@ model:
 discretize_actions: false
 
 # optimizer
-lr: 5e-5
+lr: 1e-4
 max_grad_norm: 0.5
 
 # RL
@@ -24,10 +24,10 @@ total_frames: 50_000_000
 c1: 0.5 # Value loss coefficient
 c2: 0.01   # Entropy bonus coefficient
 clip_ratio: 0.2
-target_kl: 0.02
+target_kl: 0.01
 value_clip: 0.2
 
 # ppo
-rollout_steps: 2048
+rollout_steps: 1024
 batch_size: 256
-update_epochs: 10
+update_epochs: 5
