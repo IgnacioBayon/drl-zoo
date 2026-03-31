@@ -226,8 +226,8 @@ def _train_loop(
         all_log_probs = torch.zeros(T, num_envs, device=device)
         all_values = torch.zeros(T, num_envs, device=device)
         all_rewards = torch.zeros(T, num_envs, device=device)
-        all_terminated = torch.zeros(T, num_envs, device=device)
-        all_truncated = torch.zeros(T, num_envs, device=device)
+        all_terminated = torch.zeros(T, num_envs, device=device, dtype=torch.bool)
+        all_truncated = torch.zeros(T, num_envs, device=device, dtype=torch.bool)
         # FIX: stores the correct next-state value at each timestep,
         # overriding with the true final-state value when an env is truncated.
         all_next_values = torch.zeros(T, num_envs, device=device)
@@ -254,10 +254,10 @@ def _train_loop(
                     rewards, dtype=torch.float32, device=device
                 )
                 all_terminated[t] = torch.tensor(
-                    terminated, dtype=torch.float32, device=device
+                    terminated, dtype=torch.bool, device=device
                 )
                 all_truncated[t] = torch.tensor(
-                    truncated, dtype=torch.float32, device=device
+                    truncated, dtype=torch.bool, device=device
                 )
 
                 # Compute V(s_{t+1}) from the next observation returned by env.step().
@@ -330,7 +330,7 @@ def _train_loop(
         # Shapes expected by GAE: [B, T] — we use [num_envs, T]
         rewards_bt = all_rewards.T  # [num_envs, T]
         values_bt = all_values.T  # [num_envs, T]
-        dones_bt = (all_terminated | all_truncated).T  # [num_envs, T]
+        dones_bt = (all_terminated | all_truncated).float().T  # [num_envs, T]
         next_values_bt = all_next_values.T  # [num_envs, T]
 
         advantages_bt = generalized_advantage_estimation(
