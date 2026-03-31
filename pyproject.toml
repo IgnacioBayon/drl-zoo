@@ -11,6 +11,7 @@ dependencies = [
     "gymnasium[mujoco]>=1.2.3",
     "imageio[ffmpeg]>=2.37.2",
     "tensorboard>=2.18.0",
+    "optuna>=4.4.0",
     "torch>=2.0.0",
     "torchvision>=0.15.0",
     "tqdm>=4.67.3",
