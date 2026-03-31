@@ -164,7 +164,8 @@ def _build_trial_command(
 
 def _objective(args: argparse.Namespace, output_root: Path):
     def objective(trial: optuna.Trial) -> float:
-        trial_dir = output_root / f"{args.algorithm}_trial_{trial.number:04d}"
+        study_prefix = args.study_name if args.study_name else args.algorithm
+        trial_dir = output_root / study_prefix / f"trial_{trial.number:04d}"
         if trial_dir.exists():
             shutil.rmtree(trial_dir)
         trial_dir.mkdir(parents=True, exist_ok=True)
