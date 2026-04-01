@@ -242,7 +242,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--timeout",
         type=int,
-        default=3600,
+        default=None,
         help="Global timeout for Optuna optimization in seconds.",
     )
     parser.add_argument("--seed", type=int, default=42, help="Base random seed.")
