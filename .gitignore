@@ -216,4 +216,5 @@ outputs/
 report/*
 !report/dqn_rainbow.tex
 !report/references.bib
-!report/sections/1_introduction.tex
+!report/sections/
+report/sections/1_introduction.aux
