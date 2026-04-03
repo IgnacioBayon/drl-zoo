@@ -211,3 +211,5 @@ __marimo__/
 
 # --- OWN IGNORES ---
 outputs/
+
+optuna.db
