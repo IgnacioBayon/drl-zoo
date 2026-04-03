@@ -37,6 +37,9 @@ def _sample_ppo_params(trial: optuna.Trial) -> dict[str, Any]:
         "train.update_epochs": trial.suggest_int("train.update_epochs", 3, 10),
         "train.target_kl": trial.suggest_float("train.target_kl", 0.003, 0.05),
         "train.max_grad_norm": trial.suggest_float("train.max_grad_norm", 0.3, 2.0),
+        "train.model.share_encoder": trial.suggest_categorical(
+            "train.model.share_encoder", [True, False]
+        ),
     }
 
 
