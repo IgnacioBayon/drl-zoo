@@ -17,6 +17,9 @@ dependencies = [
     "tqdm>=4.67.3",
     "setuptools<82",
     "opencv-python>=4.13.0.92",
+    "plotly>=6.6.0",
+    "scikit-learn>=1.8.0",
+    "optuna-dashboard>=0.20.0",
 ]
 
 [[tool.uv.index]]

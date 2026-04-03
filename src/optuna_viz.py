@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
         description="Visualize an Optuna study from the shared SQLite database."
     )
     parser.add_argument(
-        "study_name",
+        "--study-name",
         type=str,
         help="Name of the Optuna study to load.",
     )
