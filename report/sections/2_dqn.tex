@@ -1,0 +1,22 @@
+\section{Introduction}
+
+\subsection{Deep Q-Network (DQN)}
+
+Deep Q-Networks (DQN)~\cite{mnih2015human} extend Q-learning by approximating the action-value function \(Q(s,a)\) with a neural network. The objective is to learn a policy that maximizes the expected discounted return by minimizing the temporal-difference (TD) error derived from the Bellman optimality equation:
+\begin{equation}
+    Q^*(s,a) = \mathbb{E}\left[r + \gamma \max_{a'} Q^*(s', a')\right].
+\end{equation}
+
+DQN optimizes the squared TD loss:
+\begin{equation}
+    \mathcal{L}(\theta) = \mathbb{E}_{(s,a,r,s') \sim \mathcal{D}} \left[ {\left( Q_\theta(s,a) - y \right)}^2 \right],
+\end{equation}
+where the target is defined as:
+\begin{equation}
+    y = r + \gamma \max_{a'} Q_{\theta^-}(s', a').
+\end{equation}
+Here, \(\theta^-\) are the parameters of a target network, updated periodically to stabilize training.
+
+To improve data efficiency and reduce temporal correlations, transitions are stored in a replay buffer and sampled uniformly during training. Exploration is handled via an \(\epsilon\)-greedy policy, where random actions are selected with probability \(\epsilon\), which is annealed over time.
+
+In our implementation, we adopt a branching Q-network architecture~\cite{tavakoli2019action} to handle discretized continuous control. The network consists of a shared encoder followed by multiple action branches, each predicting Q-values over discrete bins for a specific action dimension. This factorization enables scalable learning in higher-dimensional action spaces while preserving the value-based formulation.

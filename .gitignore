@@ -214,5 +214,7 @@ outputs/
 
 # Report files
 report/*
-!report/dqn_rainbow.tex
-!report/references.bib
+!report/main.tex
+!report/references.bib 
+!report/sections/
+report/sections/*.aux
