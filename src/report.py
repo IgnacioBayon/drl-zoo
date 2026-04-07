@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 import numpy as np
 from tensorboard.backend.event_processing import event_accumulator
 
@@ -76,7 +77,7 @@ def shorten_run_name(run_name):
     return m.group(1) if m else run_name
 
 
-def main():
+def plot_dqn_training_rewards():
     event_files = find_dqn_event_files(OUTPUTS_DIR)
 
     if not event_files:
@@ -127,8 +128,109 @@ def main():
     plt.grid(True, alpha=0.3)
     plt.legend(title="Run", fontsize=8, ncol=2)
     plt.tight_layout()
-    plt.savefig("dqn_rewards.pdf")
+    plt.savefig("report/images/dqn_rewards.pdf")
     plt.show()
+
+
+def plot_eval_rewards():
+    from tensorboard.backend.event_processing import event_accumulator
+    import matplotlib.pyplot as plt
+
+    log_path = "outputs/run_20260305_130907_Humanoid-v5_rainbow/logs"
+
+    ea = event_accumulator.EventAccumulator(log_path)
+    ea.Reload()
+
+    # Print available tags
+    # print(ea.Tags()["scalars"])
+
+    # Extract data
+    tag = "eval/mean_reward"  # <- change if needed
+    events = ea.Scalars(tag)
+
+    steps = [e.step for e in events]
+    values = [e.value for e in events]
+
+    # ---------------------------
+    # ICML-style settings
+    # ---------------------------
+    plt.rcParams.update({
+        "figure.figsize": (3.3, 2.4),   # single column width
+        "font.size": 8,
+        "axes.titlesize": 9,
+        "axes.labelsize": 8,
+        "xtick.labelsize": 7,
+        "ytick.labelsize": 7,
+        "legend.fontsize": 7,
+        "lines.linewidth": 1.5,
+        "axes.grid": True,
+        "grid.linewidth": 0.4,
+        "grid.alpha": 0.3,
+        "savefig.bbox": "tight",
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+    })
+
+    # ---------------------------
+    # Moving average
+    # ---------------------------
+    def moving_average(x, w=20):
+        if len(x) < w:
+            return np.array(x)
+        return np.convolve(x, np.ones(w) / w, mode="valid")
+
+    # ---------------------------
+    # Replace with your data
+    # ---------------------------
+    # steps = np.array(steps)
+    # values = np.array(values)
+
+    values_s = moving_average(values, w=20)
+    steps_s = steps[len(steps) - len(values_s):]
+
+    # ---------------------------
+    # Plot
+    # ---------------------------
+    fig, ax = plt.subplots()
+
+    # Raw curve (faint)
+    ax.plot(steps, values, alpha=0.25, linewidth=1.0)
+
+    # Smoothed curve (main)
+    ax.plot(steps_s, values_s, linewidth=1.8)
+
+    # Labels (short and clean)
+    ax.set_xlabel("Environment steps")
+    ax.set_ylabel("Eval. mean reward")
+
+    # Optional small title (can remove if you prefer pure ICML style)
+    # ax.set_title("Rainbow on Humanoid-v5\n20-episode moving average", pad=4)
+
+    # ---------------------------
+    # Format x-axis in millions
+    # ---------------------------
+    ax.xaxis.set_major_formatter(
+        FuncFormatter(lambda x, pos: f"{x/1e6:.0f}M")
+    )
+
+    # ---------------------------
+    # Clean look (ICML style)
+    # ---------------------------
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    plt.tight_layout()
+
+    # ---------------------------
+    # Save as vector PDF
+    # ---------------------------
+    plt.savefig("report/images/rainbow_results.pdf", bbox_inches="tight")
+
+
+def main():
+    # plot_dqn_training_rewards()
+    plot_eval_rewards()
+
 
 
 if __name__ == "__main__":

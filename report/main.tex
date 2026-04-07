@@ -14,6 +14,7 @@
 \usepackage{graphicx, wrapfig, placeins}        % Images, wrapping, FloatBarrier
 \usepackage{caption, subcaption}                % Caption formatting
 \usepackage{tikz, color}                        % Drawing & Color (epsfig removed)
+\graphicspath{{images/}}
 
 % --- 4. Tables & Lists ---
 \usepackage{booktabs, multirow, makecell}       % Prof. tables, spanning rows/cells
@@ -48,9 +49,9 @@
 \begin{document}
 
 \twocolumn[
-\icmltitle{DQN and Rainbow: A Comparative Study}
+    \icmltitle{DQN and Rainbow: A Comparative Study}
 
-\icmlsetsymbol{equal}{*}
+    \icmlsetsymbol{equal}{*}
 
 \begin{icmlauthorlist}
   \icmlauthor{Sergio Herreros Pérez}{icai}
@@ -63,15 +64,14 @@
 \icmlcorrespondingauthor{Adrián López-Lanchares Echezarreta}{adri@alu.comillas.edu}
 \icmlcorrespondingauthor{Ignacio Bayón Jiménez-Ugarte}{ibayon@alu.comillas.edu}
 
-\icmlaffiliation{icai}{Master in Artificial Intelligence, Universidad Pontificia Comillas (ICAI)}
+    \icmlaffiliation{icai}{Master in Artificial Intelligence, Universidad Pontificia Comillas (ICAI)}
 
-\icmlkeywords{Deep Q-Network, Rainbow, Reinforcement Learning}
+    \icmlkeywords{Deep Q-Network, Rainbow, Reinforcement Learning}
 
-\vskip 0.3in
+    \vskip 0.3in
 ]
 \setlength{\textfloatsep}{0.15in}
 
-% Just print affiliations without the notice
 \printAffiliationsAndNotice{}
 
 \begin{abstract}
@@ -87,7 +87,7 @@
 % -------------------------
 % References
 % -------------------------
-\bibliography{references}
 \bibliographystyle{icml2026}
+\bibliography{references}
 
 \end{document}
