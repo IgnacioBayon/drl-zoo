@@ -19,7 +19,7 @@ from src.environment import build_from_config
 from src.utils import evaluate_and_record, get_device, save_checkpoint
 
 from .buffer import ReplayBuffer
-from .model import Actor, DoubleCritic
+from .model import Actor, DoubleCritic, Encoder
 
 log = logging.getLogger(__name__)
 
@@ -391,6 +391,13 @@ def train_sac(cfg: DictConfig) -> None:
 
     action_dim = int(envs.single_action_space.shape[0])
 
+    if cfg.train.model.share_encoder:
+        encoder = Encoder(
+            in_channels=cfg.train.model.actor.in_channels,
+        )
+    else:
+        encoder = None
+
     # -- networks & optimiser -------------------------------------------------
     actor = instantiate(
         cfg.train.model.actor,
@@ -398,18 +405,21 @@ def train_sac(cfg: DictConfig) -> None:
         action_dim=action_dim,
         action_low=envs.single_action_space.low.tolist(),
         action_high=envs.single_action_space.high.tolist(),
+        encoder=encoder,
     ).to(device)
 
     critic = instantiate(
         cfg.train.model.critic,
         in_channels=cfg.env.stack_size,
         action_dim=action_dim,
+        encoder=encoder,
     ).to(device)
 
     critic_target = instantiate(
         cfg.train.model.critic,
         in_channels=cfg.env.stack_size,
         action_dim=action_dim,
+        encoder=encoder,
     ).to(device)
     critic_target.load_state_dict(critic.state_dict())
     critic_target.eval()

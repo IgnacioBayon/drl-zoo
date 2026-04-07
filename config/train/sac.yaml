@@ -2,6 +2,7 @@ device: auto   # auto | cpu | cuda
 
 # model
 model:
+  share-encoder: false
   actor:
     _target_: src.sac.model.Actor
     in_channels: ${env.stack_size}

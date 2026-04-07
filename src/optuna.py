@@ -99,6 +99,9 @@ def _sample_sac_params(trial: optuna.Trial) -> dict[str, Any]:
         "train.start_train_after": trial.suggest_categorical(
             "train.start_train_after", [1_000, 5_000, 10_000]
         ),
+        "train.model.share_encoder": trial.suggest_categorical(
+            "train.model.share_encoder", [True, False]
+        ),
         "env.target_velocity": trial.suggest_float("env.target_velocity", 0.0, 5.0),
         "env.forward_reward_weight": trial.suggest_float(
             "env.forward_reward_weight", 1.0, 5.0
