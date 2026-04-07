@@ -6,12 +6,12 @@ model:
     _target_: src.sac.model.Actor
     in_channels: ${env.stack_size}
     action_dim: ???
-    hidden_dims: [256, 256]
+    hidden_dims: [512, 512]
   critic:
     _target_: src.sac.model.DoubleCritic
     in_channels: ${env.stack_size}
     action_dim: ???
-    hidden_dims: [256, 256]
+    hidden_dims: [512, 512]
 
 # SAC always uses continuous actions (no discretization wrapper)
 discretize_actions: false

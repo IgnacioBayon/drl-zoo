@@ -86,21 +86,24 @@ def _sample_rainbow_params(trial: optuna.Trial) -> dict[str, Any]:
 
 def _sample_sac_params(trial: optuna.Trial) -> dict[str, Any]:
     return {
-        "train.actor_lr": trial.suggest_float("train.actor_lr", 1e-5, 1e-3, log=True),
-        "train.critic_lr": trial.suggest_float("train.critic_lr", 1e-5, 1e-3, log=True),
-        "train.alpha_lr": trial.suggest_float("train.alpha_lr", 1e-5, 1e-3, log=True),
+        "train.actor_lr": trial.suggest_float("train.actor_lr", 1e-5, 1e-4, log=True),
+        "train.critic_lr": trial.suggest_float("train.critic_lr", 1e-5, 1e-4, log=True),
+        "train.alpha_lr": trial.suggest_float("train.alpha_lr", 1e-5, 1e-4, log=True),
         "train.gamma": 1.0
         - trial.suggest_float("train.one_minus_gamma", 1e-4, 5e-2, log=True),
         "train.tau": trial.suggest_float("train.tau", 1e-3, 2e-2, log=True),
-        "train.batch_size": trial.suggest_categorical(
-            "train.batch_size", [64, 128, 256]
-        ),
+        "train.batch_size": trial.suggest_categorical("train.batch_size", [256, 512]),
         "train.gradient_steps": trial.suggest_categorical(
-            "train.gradient_steps", [1, 2, 3, 4]
+            "train.gradient_steps", [3, 4, 5]
         ),
         "train.start_train_after": trial.suggest_categorical(
-            "train.start_train_after", [10_000, 20_000, 50_000]
+            "train.start_train_after", [1_000, 5_000, 10_000]
         ),
+        "env.target_velocity": trial.suggest_float("env.target_velocity", 0.0, 5.0),
+        "env.forward_reward_weight": trial.suggest_float(
+            "env.forward_reward_weight", 1.0, 5.0
+        ),
+        "env.healthy_reward": trial.suggest_float("env.healthy_reward", 0.0, 2.0),
     }
 
 
