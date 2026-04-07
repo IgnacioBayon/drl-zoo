@@ -1,8 +1,9 @@
 \section{Introduction}
+\label{sec:dqn}
 
 \subsection{Deep Q-Network (DQN)}
 
-Deep Q-Networks (DQN)~\cite{mnih2015human} extend Q-learning by approximating the action-value function \(Q(s,a)\) with a neural network. The objective is to learn a policy that maximizes the expected discounted return by minimizing the temporal-difference (TD) error derived from the Bellman optimality equation:
+Deep Q-Networks (DQN)~\cite{mnih2015humanlevel} extend Q-learning by approximating the action-value function \(Q(s,a)\) with a neural network. The objective is to learn a policy that maximizes the expected discounted return by minimizing the temporal-difference (TD) error derived from the Bellman optimality equation:
 \begin{equation}
     Q^*(s,a) = \mathbb{E}\left[r + \gamma \max_{a'} Q^*(s', a')\right].
 \end{equation}
