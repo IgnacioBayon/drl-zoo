@@ -19,6 +19,43 @@ REWARD_TAG_CANDIDATES = [
 ]
 
 
+def set_report_style():
+    plt.rcParams.update(
+        {
+            "figure.figsize": (3.3, 2.4),  # single-column report figure
+            "font.size": 8,
+            "axes.titlesize": 9,
+            "axes.labelsize": 8,
+            "xtick.labelsize": 7,
+            "ytick.labelsize": 7,
+            "legend.fontsize": 6,
+            "lines.linewidth": 1.5,
+            "axes.grid": True,
+            "grid.linewidth": 0.4,
+            "grid.alpha": 0.3,
+            "savefig.bbox": "tight",
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
+        }
+    )
+
+
+def moving_average(y, window=20):
+    y = np.asarray(y, dtype=float)
+    if len(y) < window:
+        return y.copy()
+    return np.convolve(y, np.ones(window) / window, mode="valid")
+
+
+def exponential_moving_average(y, alpha=0.1):
+    y = np.asarray(y, dtype=float)
+    ema = np.zeros_like(y)
+    ema[0] = y[0]
+    for t in range(1, len(y)):
+        ema[t] = alpha * y[t] + (1 - alpha) * ema[t - 1]
+    return ema
+
+
 def find_dqn_event_files(outputs_dir: Path):
     event_files = []
     for run_dir in outputs_dir.iterdir():
@@ -34,6 +71,7 @@ def find_dqn_event_files(outputs_dir: Path):
         for f in logs_dir.iterdir():
             if f.is_file() and f.name.startswith("events.out.tfevents"):
                 event_files.append((run_dir.name, f))
+
     return sorted(event_files)
 
 
@@ -61,34 +99,75 @@ def extract_scalar_series(ea, tag):
     return steps, values
 
 
-def moving_average(y, window=25):
-    if len(y) < window:
-        return y.copy()
-    kernel = np.ones(window) / window
-    y_smooth = np.convolve(y, kernel, mode="valid")
-    return y_smooth
-
-
 def shorten_run_name(run_name):
-    # Example:
-    # run_20260306_173046_Humanoid-v5_dqn -> 20260306_173046
     m = re.match(r"run_(\d{8}_\d{6})_.*", run_name)
     return m.group(1) if m else run_name
 
 
-def plot_dqn_training_rewards():
-    event_files = find_dqn_event_files(OUTPUTS_DIR)
+def format_steps_in_millions(ax):
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{x / 1e6:.0f}M"))
 
+
+def style_report_axes(ax):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def plot_eval_rewards():
+    set_report_style()
+
+    log_path = "outputs/run_20260305_130907_Humanoid-v5_rainbow/logs"
+    tag = "eval/mean_reward"
+    # smooth_window = 20
+
+    ea = event_accumulator.EventAccumulator(log_path)
+    ea.Reload()
+
+    events = ea.Scalars(tag)
+    steps = np.array([e.step for e in events], dtype=float)
+    values = np.array([e.value for e in events], dtype=float)
+
+    # values_s = moving_average(values, window=20)
+    values_s = exponential_moving_average(values, alpha=0.05)
+    steps_s = steps[len(steps) - len(values_s) :]
+
+    fig, ax = plt.subplots()
+
+    ax.plot(steps, values, alpha=0.25, linewidth=1.0)
+    ax.plot(steps_s, values_s, linewidth=1.8)
+
+    ax.set_xlabel("Environment steps")
+    ax.set_ylabel("Eval. mean reward")
+
+    format_steps_in_millions(ax)
+    style_report_axes(ax)
+
+    plt.tight_layout()
+    plt.savefig("report/images/rainbow_results.pdf", bbox_inches="tight")
+
+
+def plot_dqn_training_rewards():
+    set_report_style()
+
+    event_files = find_dqn_event_files(OUTPUTS_DIR)
     if not event_files:
         print("No DQN event files found.")
         return
 
-    plt.figure(figsize=(12, 7))
+    n = len(event_files)
+    colors = matplotlib.colormaps["tab10"].resampled(n)
+
+    fig, ax = plt.subplots()
 
     found_any = False
-    window = 30  # try 20, 30, 50
 
-    for run_name, event_file in event_files:
+    for i, (run_name, event_file) in enumerate(event_files):
+        if "dqn" not in run_name.lower():
+            continue
+
+        color = colors(i)
+        ax.set_prop_cycle(color=[color])
+
         ea = load_event_accumulator(event_file)
         reward_tag = choose_reward_tag(ea.Tags())
 
@@ -98,23 +177,21 @@ def plot_dqn_training_rewards():
             continue
 
         steps, rewards = extract_scalar_series(ea, reward_tag)
-
         if len(steps) == 0:
             continue
 
         label = shorten_run_name(run_name)
 
-        # Raw curve, faint
-        plt.plot(steps, rewards, alpha=0.15, linewidth=1)
+        # rewards_s = moving_average(rewards, window=20)
+        rewards_s = exponential_moving_average(rewards, alpha=0.05)
+        steps_s = steps[len(steps) - len(rewards_s) :]
 
-        # Smoothed curve
-        smooth_rewards = moving_average(rewards, window=window)
-        if len(rewards) >= window:
-            smooth_steps = steps[window - 1 :]
-        else:
-            smooth_steps = steps
+        # Raw curve (faint)
+        ax.plot(steps, rewards, alpha=0.10, linewidth=0.4, color=color)
 
-        plt.plot(smooth_steps, smooth_rewards, linewidth=2, label=label)
+        # Smoothed curve (main)
+        ax.plot(steps_s, rewards_s, linewidth=0.7, label=label, color=color)
+
         found_any = True
 
     if not found_any:
@@ -219,11 +296,101 @@ def plot_eval_rewards():
     ax.spines["right"].set_visible(False)
 
     plt.tight_layout()
+    plt.savefig("report/images/dqn_rewards.pdf", bbox_inches="tight")
 
-    # ---------------------------
-    # Save as vector PDF
-    # ---------------------------
-    plt.savefig("report/images/rainbow_results.pdf", bbox_inches="tight")
+
+def plot_eval_reward_speed_final_x() -> None:
+    """Plot evaluation reward, speed, and final x position with exponential smoothing."""
+    import matplotlib.pyplot as plt
+    from tensorboard.backend.event_processing import event_accumulator
+
+    def exponential_moving_average(
+        values: list[float] | np.ndarray, alpha: float = 0.1
+    ) -> np.ndarray:
+        """Return exponentially smoothed values with the same length as the input."""
+        arr = np.asarray(values, dtype=float)
+        if arr.size == 0:
+            return arr
+
+        smoothed = np.empty_like(arr)
+        smoothed[0] = arr[0]
+        for i in range(1, arr.size):
+            smoothed[i] = alpha * arr[i] + (1.0 - alpha) * smoothed[i - 1]
+        return smoothed
+
+    log_path = "outputs/hopper_dqn"
+    ea = event_accumulator.EventAccumulator(log_path)
+    ea.Reload()
+
+    # Extract reward
+    reward_tag = "episode/reward"
+    reward_events = ea.Scalars(reward_tag)
+    reward_steps = np.array([e.step for e in reward_events], dtype=float)
+    reward_values = np.array([e.value for e in reward_events], dtype=float)
+
+    # Extract speed
+    speed_tag = "episode/avg_speed"
+    speed_events = ea.Scalars(speed_tag)
+    speed_steps = np.array([e.step for e in speed_events], dtype=float)
+    speed_values = np.array([e.value for e in speed_events], dtype=float)
+
+    # Extract final x position
+    x_tag = "episode/final_x"
+    x_events = ea.Scalars(x_tag)
+    x_steps = np.array([e.step for e in x_events], dtype=float)
+    x_values = np.array([e.value for e in x_events], dtype=float)
+
+    plt.rcParams.update(
+        {
+            "figure.figsize": (6.5, 2.4),
+            "font.size": 8,
+            "axes.titlesize": 9,
+            "axes.labelsize": 8,
+            "xtick.labelsize": 7,
+            "ytick.labelsize": 7,
+            "legend.fontsize": 7,
+            "lines.linewidth": 1.5,
+            "axes.grid": True,
+            "grid.linewidth": 0.4,
+            "grid.alpha": 0.3,
+            "savefig.bbox": "tight",
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
+        }
+    )
+
+    reward_values_s = exponential_moving_average(reward_values)
+    speed_values_s = exponential_moving_average(speed_values)
+    x_values_s = exponential_moving_average(x_values)
+
+    values_dict = {
+        "Reward": (reward_steps, reward_values, reward_values_s),
+        "Speed": (speed_steps, speed_values, speed_values_s),
+        "Final x": (x_steps, x_values, x_values_s),
+    }
+
+    fig, axs = plt.subplots(1, 3, figsize=(6.5, 2.4))
+
+    for i, metric in enumerate(["Speed", "Reward", "Final x"]):
+        steps, values, values_s = values_dict[metric]
+        axs[i].plot(steps, values, alpha=0.25, linewidth=1.0)
+        axs[i].plot(steps, values_s, linewidth=1.8)
+        axs[i].set_xlabel("Environment steps")
+        axs[i].set_ylabel(metric)
+        axs[i].set_ylim(np.percentile(values, 5), np.percentile(values, 95))
+        axs[i].xaxis.set_major_formatter(
+            FuncFormatter(lambda x, pos: f"{x / 1e6:.0f}M")
+        )
+        axs[i].spines["top"].set_visible(False)
+        axs[i].spines["right"].set_visible(False)
+        axs[0].xaxis.set_major_formatter(
+            FuncFormatter(lambda x, pos: f"{x / 1e6:.0f}M")
+        )
+        axs[0].spines["top"].set_visible(False)
+        axs[0].spines["right"].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig("report/images/dqn_hopper_results.pdf", bbox_inches="tight")
 
 
 def plot_eval_reward_speed_final_x() -> None:
@@ -322,8 +489,7 @@ def plot_eval_reward_speed_final_x() -> None:
 
 def main():
     # plot_dqn_training_rewards()
-    # plot_eval_rewards()
-    plot_eval_reward_speed_final_x()
+    plot_eval_rewards()
 
 
 if __name__ == "__main__":
