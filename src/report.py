@@ -206,6 +206,8 @@ def plot_dqn_training_rewards():
     format_steps_in_millions(ax)
     style_report_axes(ax)
 
+    # Set y-axis limits to focus on the main reward range
+    ax.set_ylim(0, 260)
     plt.tight_layout()
     plt.savefig("report/images/dqn_rewards.pdf", bbox_inches="tight")
 
