@@ -1,18 +1,17 @@
 \section{Rainbow DQN}
-\label{sec:rainbow}
 
 \subsection{Methodology}
 Rainbow \cite{hessel2018rainbow} combines several extensions to DQN into a unified algorithm, improving both sample efficiency and training stability. In this work, we implement all core Rainbow components: Double Q-learning, Prioritized Experience Replay (PER), dueling networks, multi-step returns, distributional reinforcement learning (C51), and Noisy Networks.
 
-Double Q-learning reduces overestimation bias by decoupling action selection and evaluation. In particular, the online network is used to select the greedy action, while the target network evaluates it, preventing the maximization step from introducing overestimation. PER further improves sample efficiency by sampling transitions with probability proportional to their temporal-difference error, focusing learning on more informative experiences. To compensate for the bias introduced by non-uniform sampling, importance sampling weights are applied during optimization. Multi-step returns accelerate learning by propagating reward information over longer horizons, which is especially beneficial in tasks with delayed rewards such as humanoid control.
+Double Q-learning reduces overestimation bias by decoupling action selection and evaluation. The online network selects the greedy action, while the target network evaluates it. PER improves sample efficiency by prioritizing transitions with high temporal-difference error, while importance sampling weights correct for the induced bias. Multi-step returns accelerate learning by propagating rewards over longer horizons.
 
-The dueling architecture decomposes the Q-function into a state-value and advantage component, allowing the network to better distinguish between the importance of the state and the relative effect of each action. This is particularly useful in states where many actions have similar outcomes. In our implementation, increasing the hidden dimension of the dueling head from 256 to 512 significantly improved performance, suggesting that the task requires sufficiently expressive value representations.
+The dueling architecture decomposes the Q-function into a state-value and advantage component, allowing the network to better estimate the relative importance of actions. In our implementation, increasing the hidden dimension of the dueling head from 256 to 512 significantly improved performance, indicating that additional capacity is beneficial for this task.
 
-We employ distributional reinforcement learning using the C51 algorithm, which models the full distribution of returns over a discrete support rather than only its expectation. The support is defined over a fixed interval $[v_{\min}, v_{\max}]$, and the network predicts a categorical distribution over this range. It is important to properly calibrate this interval so that it covers the range of possible discounted returns. Given bounded rewards, this range can be approximated by $R_{\max} \approx \frac{r_{\max}}{1 - \gamma}$. If the interval is too narrow, the distribution becomes truncated due to clipping; if it is too wide, the representation becomes less precise, as probability mass is spread over an unnecessarily large range.
+We employ distributional reinforcement learning using the C51 algorithm, which models the full distribution of returns over a discrete support. The support is defined over a fixed interval $[v_{\min}, v_{\max}]$, and the network predicts a categorical distribution over this range. It is important to properly calibrate this interval so that it covers the range of possible discounted returns. Given bounded rewards, this range can be approximated by $R_{\max} \approx \frac{r_{\max}}{1 - \gamma}$. Poor calibration may lead to clipping of the distribution or loss of resolution, negatively impacting performance.
 
-Exploration is handled using Noisy Networks, which replace $\epsilon$-greedy exploration with parameterized noise injected directly into the network weights. This results in state-dependent exploration and avoids the need for manually tuning an exploration schedule. Additionally, we apply gradient clipping, which proved essential to prevent instability and large parameter updates during training in this high-dimensional control setting.
+Exploration is handled using Noisy Networks, which replace $\epsilon$-greedy exploration with parameterized noise injected into the network weights. Additionally, we apply gradient clipping, which proved essential to prevent instability during training in this high-dimensional control setting.
 
-We use a replay buffer of size $300{,}000$, which provided a good balance between sample diversity and computational efficiency. A sufficiently large buffer helps decorrelate samples and stabilize training, while excessively large buffers may reduce the relevance of older experiences.
+We use a replay buffer of size $300{,}000$, which provided a good balance between sample diversity and computational efficiency.
 
 We do not employ branching architectures in Rainbow. As discussed in the DQN section, branching did not provide improvements in this environment, and extending it to Rainbow did not yield gains.
 
@@ -33,7 +32,6 @@ The learning curve exhibits a steady increase in reward, with a notable improvem
 
 \begin{figure}[t]
     \centering
-    % set 0.75 linewidth
     \includegraphics[width=0.75\linewidth]{humanoid_pose.png}
     \caption{Example of the learned walking posture, with one leg forward and an arched back.}
     \label{fig:humanoid_pose}
