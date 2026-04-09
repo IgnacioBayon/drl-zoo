@@ -43,6 +43,15 @@ where $v_x$ is the current forward velocity, $v_{\text{target}}$ is the desired 
 \end{equation}
 with a penalty weight $w_{\text{ctrl}}$. The healthy survival reward is retained with a constant value $w_{\text{healthy}}$.
 
+% --- FLOATING TOP PLOT FOR HOPPER ---
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{hopper_rainbow_reward_speed_x.pdf}
+    \caption{Learning dynamics of Rainbow on the Hopper environment. The agent rapidly converges to a stable, high-speed gait in approximately 10M steps.}
+    \label{fig:hopper_rainbow_results}
+\end{figure*}
+% -----------------------------------
+
 \subsection{Hopper: Learning from Pixels}
 \label{sec:hopper_results}
 
@@ -61,6 +70,15 @@ We train the Branching DQN (BDQN) for $50,000,000$ environment frames. The actio
 
 The learning dynamics of this configuration are illustrated in Figure~\ref{fig:hopper_results}. As training progresses, the agent's step-wise speed smoothly converges toward the target velocity of $1.5$. Note that it converges to $1.25$, which indicates that for the strategy it learned that is the most stable velocity. A higher target may have learned a faster strategy or just collapsed. This convergence is accompanied by a steady increase in both the episodic reward and the final $X$ position, indicating that the combination of our custom reward shaping and the BDQN architecture successfully enables the agent tomaintain balance and move forward relying strictly on high-dimensional pixel observations.
 
+% --- SINGLE COLUMN PLOT PLACEHOLDER ---
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{dqn_rewards.pdf}
+    \caption{Training reward across multiple hyperparameter sweeps on the Humanoid environment using DQN.}
+    \label{fig:humanoid_failures}
+\end{figure}
+% ------------------------------------
+
 \subsection{Humanoid: The Limits of Discretized DQN}
 \label{sec:humanoid_results}
 
@@ -68,16 +86,6 @@ Following the successful application of Branching DQN on the Hopper environment,
 
 \textbf{Environment Tweaks:}
 To mitigate this complexity, we artificially constrained the morphology by freezing several non-essential actuators. Specifically, we locked the Z-axis rotations of the abdomen and hips, and completely disabled all six arm joints (rendering the arms physically limp). By freezing these 9 specific joints ($[1, 4, 8, 11, 12, 13, 14, 15, 16]$), we force the agent to focus purely on the core mechanics of leg actuation and balance. Additionally, to capture the finer nuances of this complex body in the visual state, we slightly increased the observation resolution from $64 \times 64$ to $96 \times 96$ pixels.
-
-% --- SINGLE COLUMN PLOT PLACEHOLDER ---
-\begin{figure}[htbp]
-    \centering
-    % \includegraphics[width=\linewidth]{figures/humanoid_failed_runs.pdf}
-    \vspace{5cm} % Placeholder block for the image
-    \caption{Training reward across multiple hyperparameter sweeps on the Humanoid environment using DQN.}
-    \label{fig:humanoid_failures}
-\end{figure}
-% ------------------------------------
 
 \textbf{Hyperparameter Sweeps:}
 To find a viable learning configuration, we conducted an exhaustive hyperparameter search. We massively scaled the training horizon (up to 100M frames) and prolonged the $\epsilon$-greedy exploration phase (annealing over up to 50M frames). We tuned replay buffer capacities (up to 500k), learning rates ($10^{-5}$ to $10^{-4}$), batch sizes, and target network update frequencies. Furthermore, we experimented heavily with the reward shaping parameters, tweaking target velocities, contact costs, and survival bonuses to guide the agent.

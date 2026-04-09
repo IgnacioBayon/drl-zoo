@@ -1,131 +1,24 @@
 \section{Introduction}
-\label{sec:introduction}
+\label{sec:intro}
 
-Deep Reinforcement Learning (DRL) has emerged as one of the most powerful
-paradigms for learning complex control policies directly from raw sensory
-data~\citep{mnih2015humanlevel,silver2016mastering}. By combining the
-representational capacity of deep neural networks with the sequential
-decision-making framework of Reinforcement Learning (RL), DRL agents have
-achieved impressive results in domains ranging from board games and video
-games to robotic manipulation and continuous locomotion~\citep{schulman2017proximal,haarnoja2018soft}.
-A particularly appealing property of DRL is its ability to operate end-to-end:
-given only raw observations and a scalar reward signal, an agent can learn
-both a useful representation of the world and a policy for acting in it,
-without access to hand-crafted features or an explicit model of the environment.
+Deep Reinforcement Learning (DRL) has achieved remarkable success, yet learning continuous control policies directly from visual inputs remains computationally demanding~\cite{mnih2015humanlevel}. Traditional actor-critic methods, such as Soft Actor-Critic (SAC)~\cite{haarnoja2018soft}, dominate these tasks due to their natural handling of continuous actions. However, value-based methods offer compelling off-policy sample efficiency. Recent advances in action-space discretization and network branching have made it possible to adapt Q-learning for continuous domains~\cite{tavakoli2019action}, providing a viable alternative to standard actor-critic setups.
 
-Among the earliest and most influential families of DRL algorithms are those
-based on the \emph{action-value function}, or $Q$-function, which estimates
-the expected discounted cumulative reward of taking a given action in a given
-state and following the optimal policy thereafter. The seminal
-Deep Q-Network (DQN)~\citep{mnih2015humanlevel} demonstrated that a
-convolutional neural network (CNN) could approximate the optimal
-$Q^{*}(s,a)$ directly from pixel observations, using two key stabilising
-mechanisms: a \emph{replay buffer} that decorrelates temporally adjacent
-transitions before they are used for gradient updates, and a periodically
-frozen \emph{target network} that provides stable regression targets and
-prevents the harmful feedback loop between the online network and its own
-bootstrapped targets. Despite its relative simplicity, DQN established
-a compelling proof of concept and remains an important baseline for
-value-based methods.
+To benchmark these capabilities, the DeepMind Control Suite~\cite{tassa2018deepmind} provides a rigorous physics-based simulation framework. In this study, we focus on learning locomotion strictly from visual pixels, utilizing environments that span from the moderately complex Hopper to the highly unstable 17-joint Humanoid. 
 
-A prominent milestone in this line of research is \textbf{Rainbow
-DQN}~\citep{hessel2018rainbow}, which integrates six orthogonal improvements
-over the original algorithm into a single, unified agent. These are:
-Double DQN~\citep{van2016deep}, which decouples action selection from action
-evaluation to reduce overestimation bias;
-Prioritised Experience Replay~\citep{schaul2016prioritized}, which samples
-transitions proportionally to their temporal-difference (TD) error so that
-more informative experiences are replayed more often;
-the Dueling Network architecture~\citep{wang2016dueling}, which decomposes
-$Q(s,a)$ into a state-value stream $V(s)$ and an advantage stream $A(s,a)$
-to improve generalisation across actions;
-multi-step returns~\citep{sutton2018reinforcement}, which replace one-step
-TD targets with $n$-step Monte Carlo estimates that propagate reward
-information more rapidly;
-Distributional RL~\citep{bellemare2017distributional}, which models the full
-return distribution rather than its expectation; and
-Noisy Networks~\citep{fortunato2018noisy}, which replace $\varepsilon$-greedy
-exploration with learnable parameter noise.
-Together, these components yield substantially higher sample efficiency and
-final performance compared with either DQN or any single extension applied
-in isolation, making Rainbow a natural next step after the DQN baseline.
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.75\linewidth]{humanoid_pose.png}
+    \caption{Example of the learned Humanoid walking posture using Rainbow, depicting the folded torso and stable gait.}
+    \label{fig:humanoid_pose}
+\end{figure}
 
-\subsection{Motivation and Scope}
-
-A fundamental challenge in applying value-based DRL to physically realistic
-continuous control is the \emph{mismatch between continuous action spaces and
-discrete $Q$-function outputs}. Environments provided by
-MuJoCo~\citep{todorov2012mujoco} via the DeepMind Control
-Suite (dm\_control)~\citep{tunyasuvunakool2020dmcontrol} expose
-high-dimensional, continuous action vectors—torques applied simultaneously to
-multiple articulated joints—which are not directly compatible with
-$Q$-function methods that enumerate actions at the output layer.
-A carefully designed \emph{action discretisation} strategy is therefore
-required to bridge this gap while preserving enough behavioural richness for
-the agent to learn coordinated locomotion gaits.
-
-A second challenge is learning from \emph{pixel observations} alone.
-Rather than providing the agent with privileged state vectors
-(joint angles, velocities, contact forces), in this work the agent receives
-only raw RGB images of the simulated scene. The network must therefore
-simultaneously learn a compact and informative visual representation of the
-environment and a high-quality value function over the discretised action
-space—a dual objective that substantially increases the difficulty and
-computational cost of training.
-
-A third challenge is \emph{task complexity and morphological difficulty}.
-Legged locomotion spans a wide spectrum: from low-dimensional systems with
-inherently stable gaits to high-dimensional humanoid bodies whose dynamics
-are notoriously difficult to control. In this work we study both ends of this
-spectrum. For the DQN baseline we use the \textbf{Hopper} environment, a
-one-legged planar system with three controllable joints, whose relatively
-low dimensionality makes it a tractable testbed for understanding the
-limitations of standard DQN under pixel observations. For the Rainbow
-agent we use the \textbf{Humanoid} environment, a $21$-degrees-of-freedom
-full-body model whose high control dimensionality, unstable balance, and
-complex contact dynamics make it one of the most challenging continuous
-control benchmarks available, allowing us to assess whether Rainbow's
-combined improvements are sufficient to tackle substantially harder tasks.
+This paper systematically compares a baseline Deep Q-Network (DQN) against the heavily augmented Rainbow DQN algorithm~\cite{hessel2018rainbow} on these high-dimensional tasks. We investigate how enhancements like distributional value modeling, Prioritized Experience Replay, and multi-step returns enable an agent to map raw pixel stacks to stable joint torques. By evaluating these algorithms across varying difficulty levels, we isolate the components strictly necessary to achieve complex bipedal balance using purely visual observations.
 
 % --- TOP OF PAGE PLOT PLACEHOLDER ---
 \begin{figure*}[t]
     \centering
     \includegraphics[width=\textwidth]{dqn_hopper_results.pdf}
-    \caption{Training metrics for the Hopper environment over 40M frames.}
+    \caption{Training metrics of DQN for the Hopper environment (smoothed with an exponential moving average).}
     \label{fig:hopper_results}
 \end{figure*}
 % ------------------------------------
-
-\subsection{Contributions and Structure}
-
-In this report we present a comparative experimental study of value-based DRL
-for pixel-based locomotion in MuJoCo environments of increasing difficulty.
-Specifically, our contributions are as follows:
-
-% TODO: Change DQN to include branching DQN?
-\begin{enumerate}
-  \item We implement and train a standard DQN agent with a CNN encoder on the
-        Hopper locomotion task under pixel observations, analysing the effect
-        of action discretisation and reward design on learning stability and
-        final performance.
-  \item We implement Rainbow DQN and apply it to the significantly harder
-        Humanoid locomotion task, studying which of Rainbow's six components
-        are most critical for learning in a high-dimensional, unstable control
-        setting.
-  \item We provide a direct qualitative and quantitative comparison between
-        both agents across training dynamics and evaluation performance,
-        discussing the extent to which Rainbow's improvements translate to
-        gains in sample efficiency and policy quality under the additional
-        difficulty of pixel-only observations.
-\end{enumerate}
-
-% TODO: put correct section references
-The remainder of this report is organised as follows.
-Section~\ref{sec:dqn} details the DQN baseline on Hopper: environment
-configuration, action discretisation, reward shaping, network architecture,
-and training results.
-Section~\ref{sec:rainbow} presents the Rainbow DQN agent on Humanoid,
-including implementation details and a comparison against the DQN baseline.
-Section~\ref{sec:conclusions} draws general conclusions, reflects on the
-lessons learned across both experimental settings, and outlines directions
-for future work.
