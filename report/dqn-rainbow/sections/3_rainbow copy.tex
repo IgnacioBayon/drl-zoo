@@ -1,0 +1,54 @@
+\section{Rainbow DQN}
+
+\subsection{Methodology}
+Rainbow \cite{hessel2018rainbow} combines several extensions to DQN into a unified algorithm, improving both sample efficiency and training stability. In this work, we implement all core Rainbow components: Double Q-learning, Prioritized Experience Replay (PER), dueling networks, multi-step returns, distributional reinforcement learning (C51), and Noisy Networks.
+
+Double Q-learning reduces overestimation bias by decoupling action selection and evaluation. The online network selects the greedy action, while the target network evaluates it. PER improves sample efficiency by prioritizing transitions with high temporal-difference error, while importance sampling weights correct for the induced bias. Multi-step returns accelerate learning by propagating rewards over longer horizons.
+
+The dueling architecture decomposes the Q-function into a state-value and advantage component, allowing the network to better estimate the relative importance of actions. In our implementation, increasing the hidden dimension of the dueling head from 256 to 512 significantly improved performance, indicating that additional capacity is beneficial for this task.
+
+We employ distributional reinforcement learning using the C51 algorithm, which models the full distribution of returns over a discrete support. The support is defined over a fixed interval $[v_{\min}, v_{\max}]$, and the network predicts a categorical distribution over this range. It is important to properly calibrate this interval so that it covers the range of possible discounted returns. Given bounded rewards, this range can be approximated by $R_{\max} \approx \frac{r_{\max}}{1 - \gamma}$. Poor calibration may lead to clipping of the distribution or loss of resolution, negatively impacting performance.
+
+Exploration is handled using Noisy Networks, which replace $\epsilon$-greedy exploration with parameterized noise injected into the network weights. Additionally, we apply gradient clipping, which proved essential to prevent instability during training in this high-dimensional control setting.
+
+We use a replay buffer of size $300{,}000$, which provided a good balance between sample diversity and computational efficiency.
+
+We do not employ branching architectures in Rainbow. As discussed in the DQN section, branching did not provide improvements in this environment, and extending it to Rainbow did not yield gains.
+
+\subsection{Results and Discussion}
+
+We evaluate our Rainbow agent on the Humanoid-v5 environment.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{rainbow_results.pdf}
+    \caption{Evaluation performance of Rainbow on Humanoid-v5 (20-episode moving average), showing steady improvement and stable walking behavior.}
+    \label{fig:rainbow_results}
+\end{figure}
+
+Figure~\ref{fig:rainbow_results} shows the evolution of the evaluation reward over training. Unlike DQN, which fails to learn a meaningful walking behavior in this environment, Rainbow is able to consistently improve performance and eventually achieve stable movement.
+
+The learning curve exhibits a steady increase in reward, with a notable improvement after approximately 15 million environment steps. This corresponds to the point at which the agent begins to consistently maintain balance and move forward.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.75\linewidth]{humanoid_pose.png}
+    \caption{Example of the learned walking posture, with one leg forward and an arched back.}
+    \label{fig:humanoid_pose}
+\end{figure}
+
+Interestingly, the learned policy adopts a specific posture to achieve stability: the humanoid keeps one leg forward and one leg backward, maintains an arched back, and does not actively use the arms. While the agent has control over all joints, we restrict unnecessary ones (e.g., arms and certain hip rotations), which encourages the emergence of this simplified and stable walking strategy.
+
+Several components of Rainbow contribute to this behavior. Prioritized replay focuses learning on informative transitions, while multi-step returns allow faster propagation of reward signals in this long-horizon task. The distributional formulation provides a richer learning signal by modeling the full return distribution, which helps capture variability in outcomes. Additionally, the increased capacity of the dueling head and the use of gradient clipping were both critical for achieving stable training.
+
+We also found that the choice of $v_{\min}$ and $v_{\max}$ plays an important role, as it determines the range over which returns are represented. Proper calibration is necessary to ensure that the value distribution is neither truncated nor overly diffuse.
+
+Despite these improvements, training remains computationally demanding and sensitive to hyperparameters. In particular, performance depends on reward scaling and replay buffer configuration, highlighting the importance of careful tuning in complex continuous control environments.
+
+\subsection{Conclusion}
+
+In this work, we implemented and evaluated Rainbow DQN on the Humanoid-v5 environment. While standard DQN fails to learn a walking behavior in this setting, Rainbow is able to achieve stable movement through the combination of multiple improvements.
+
+Our results highlight the importance of distributional learning, multi-step returns, and prioritized replay in enabling learning in high-dimensional control tasks. Additionally, architectural choices and stabilization techniques, such as increasing model capacity and applying gradient clipping, were essential for successful training.
+
+Overall, Rainbow provides a powerful framework for value-based reinforcement learning, although its performance remains sensitive to implementation details and hyperparameter choices.

@@ -275,13 +275,13 @@ def plot_train_reward_speed_final_x(
     plt.tight_layout()
 
     name = log_path.split("/")[-1]
-    plt.savefig(f"report/images/{name}_reward_speed_x.pdf")
+    plt.savefig("report/ppo-sac/images/ppo_hopper_reward_speed_x.pdf")
 
 
 def main() -> None:
     """Run report generation."""
     plot_train_reward_speed_final_x(
-        log_path="outputs/hopper_rainbow",
+        log_path="outputs/ppo-hopper-best",
         percentiles={"Speed": (1, 100), "Reward": (0, 99.5), "Final x": (0, 99.5)},
         alpha=0.05,
     )

@@ -213,9 +213,12 @@ __marimo__/
 outputs/
 
 # Report files
-report/*
-!report/main.tex
-!report/references.bib 
-!report/sections/
-report/sections/*.aux
-!report/images/
+*.sty
+*.bst
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.gz
