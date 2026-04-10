@@ -40,10 +40,10 @@ The reward shaping follows the same formulation as before, targeting a forward v
  control smoothness penalty of $w_{\text{ctrl}} = 0.001$, and a healthy survival bonus of $w_{\text{healthy}} = 1.0$.
 
 \textbf{Algorithm Configuration:}
-PPO is trained for \todo{X} environment frames. Each rollout collects \todo{N} steps per parallel environment before performing \todo{K} epochs of minibatch updates. 
-The clipping threshold is set to $\varepsilon = \todo{x}$, the GAE parameter to $\lambda = \todo{x}$, and the discount factor to $\gamma = \todo{x}$. The policy and 
-value networks share a convolutional encoder, with separate MLP heads for the policy mean and value estimate. Optimization uses Adam with a learning rate of \todo{lr}, 
-optionally with linear decay.
+PPO is trained for 1 million environment frames. Each rollout collects 256 steps per parallel environment before performing 10 epochs 
+of minibatch updates. The clipping threshold is set to $\varepsilon = 0.1$, the GAE parameter to $\lambda = 0.975$, and the discount factor to 
+$\gamma = 0.995$. The policy and value networks share a convolutional encoder, with separate MLP heads for the policy mean and value estimate. 
+Optimization uses Adam with a learning rate of 0.0004 \todo{0.0004 or 4e-3}.
 
 % --- HOPPER RESULTS PLOT ---
 \begin{figure*}[htbp]
