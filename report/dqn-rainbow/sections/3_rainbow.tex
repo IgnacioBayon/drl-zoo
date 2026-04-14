@@ -31,13 +31,13 @@ Additionally, we found that standard network capacities were insufficient for ev
 
 \subsection{Hopper: A Leap in Performance}
 
-Before tackling the Humanoid, we evaluated our Rainbow configuration on the simpler Hopper environment. The improvements over the baseline BDQN were massive. While standard DQN required approximately 40 million frames to learn a stable gait, Rainbow achieved highly stable locomotion in just 10 million steps. 
+Before tackling the Humanoid, we evaluated our Rainbow configuration on the simpler Hopper environment. The improvements over the baseline BDQN were massive. While standard DQN required approximately 40 million frames to learn a stable gait, Rainbow achieved highly stable walking in just 10 million steps. 
 
 
 
 Interestingly, Rainbow also discovered a vastly superior behavioral policy. Previously, the standard DQN converged to a sub-optimal speed of $1.25$ units/s against a target of $1.5$, learning a somewhat fumbling, conservative hop to maintain balance. Rainbow, however, learned to confidently exceed the target, stabilizing at an average velocity of $1.75$ units/s. This behavior suggests that learning a rapid, fluid, and continuous motion is dynamically more stable (relying on forward inertia) than the slower, stuttering hops learned by DQN that constantly require the agent to catch its balance. The Rainbow Hopper sustains this velocity indefinitely, traveling entirely out of the standard rendering zone without collapsing. 
 
-\subsection{Humanoid: Achieving Stable Locomotion}
+\subsection{Humanoid: Learning Stable Walking Behaviour}
 
 Building on the success in the Hopper environment, we applied Rainbow to the heavily constrained Humanoid-v5 task. The environment utilized a $96 \times 96$ pixel observation with a frame stack of 4, running across 30 parallel environments. The action space was discretized into 3 bins per joint, mapped to the absolute extremes.
 
@@ -45,6 +45,6 @@ Building on the success in the Hopper environment, we applied Rainbow to the hea
 We trained the model for 50,000,000 frames using a replay buffer of 300,000 transitions and a batch size of 64. We utilized 3-step returns ($n=3$). Prioritized Experience Replay was configured with an $\alpha = 0.6$, and importance sampling weights ($\beta$) were annealed from $0.4$ to $1.0$ over the first 1,000,000 frames. Exploration was driven dynamically via Noisy Networks initialized with $\sigma_0 = 0.5$. The optimization used a learning rate of $10^{-4}$ with target network updates occurring every 10,000 frames. Reward parameters were strictly defined: target velocity at $1.0$, $w_{\text{vel}} = 3.0$, $w_{\text{healthy}} = 1.0$, and a control penalty of $w_{\text{ctrl}} = 0.01$.
 
 \textbf{Results and Discussion:}
-Unlike the standard DQN, which completely failed to learn meaningful movement despite exhaustive hyperparameter sweeps, Rainbow successfully achieved stable locomotion in just 30 million environment steps. Remarkably, it conquered the high-dimensional Humanoid task in fewer steps than the baseline DQN required for the simple Hopper.
+Unlike the standard DQN, which completely failed to learn meaningful movement despite exhaustive hyperparameter sweeps, Rainbow successfully achieved stable walking in just 30 million environment steps. Remarkably, it conquered the high-dimensional Humanoid task in fewer steps than the baseline DQN required for the simple Hopper.
 
-As shown in Figure~\ref{fig:humanoid_pose}, the resulting locomotion is highly stable but visually unnatural. To maximize the reward function while avoiding catastrophic falls, the agent adopts a posture with its torso folded heavily forward. It effectively drags one leg while using the other for primary propulsion, resembling a crutch-like motion. While this motion is physically awkward, it exploits the physics engine brilliantly, keeping the center of mass extremely low and completely bypassing the bipedal instability.
+As shown in Figure~\ref{fig:humanoid_pose}, the resulting movement is highly stable but visually unnatural. To maximize the reward function while avoiding catastrophic falls, the agent adopts a posture with its torso folded heavily forward. It effectively drags one leg while using the other for primary propulsion, resembling a crutch-like motion. While this motion is physically awkward, it exploits the physics engine brilliantly, keeping the center of mass extremely low and completely bypassing the bipedal instability.
