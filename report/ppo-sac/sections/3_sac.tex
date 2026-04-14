@@ -5,47 +5,71 @@
 
 We implement Soft Actor-Critic (SAC)~\cite{haarnoja2018sac} for continuous control from image-based observations. SAC is an off-policy actor-critic algorithm that optimizes a stochastic policy under the maximum entropy reinforcement learning framework, encouraging both high reward and exploration.
 
-\textbf{Architecture.} 
-Our model consists of a stochastic actor and a double Q-function critic. Observations are high-dimensional images and are first processed through a convolutional encoder that extracts latent features. 
+\textbf{Architecture.}
+Our model consists of a stochastic actor and a double Q-function critic. Observations are high-dimensional images and are first processed through a convolutional encoder that extracts latent features.
 
 The actor is parameterized as a Gaussian policy. The encoded features are passed through a multi-layer perceptron (MLP) to produce the mean and log-standard deviation of the action distribution. Actions are sampled using the reparameterization trick and passed through a $\tanh$ squashing function to ensure they lie within valid bounds. A correction term is applied to the log-probability to account for this transformation.
 
 The critic is implemented as a \textbf{double Q-network} to reduce overestimation bias. A shared encoder extracts latent features, which are concatenated with the action and passed through two independent Q-heads, producing $Q_1$ and $Q_2$. During training, the minimum of these estimates is used to compute targets.
 
-\textbf{Replay Buffer.} 
+\textbf{Replay Buffer.}
 We use a uniform replay buffer with fixed capacity to store transitions $(s, a, r, s', d)$. The buffer is implemented using preallocated tensors and a circular indexing scheme for efficiency. Observations are stored as \texttt{uint8} images and normalized to $[0,1]$ at training time to reduce memory usage.
 
-\textbf{Training Objective.} 
+\textbf{Training Objective.}
 SAC optimizes a soft Bellman objective. The critic is trained by minimizing:
 \begin{equation}
-\mathcal{L}_Q = \mathbb{E}_{(s,a,r,s') \sim \mathcal{D}} \left[ (Q_i(s,a) - y)^2 \right],
+    \mathcal{L}_Q = \mathbb{E}_{(s,a,r,s') \sim \mathcal{D}} \left[ (Q_i(s,a) - y)^2 \right],
 \end{equation}
 where the target is:
 \begin{equation}
-y = r + \gamma (1 - d)\left( \min_j Q_j(s', a') - \alpha \log \pi(a'|s') \right).
+    y = r + \gamma (1 - d)\left( \min_j Q_j(s', a') - \alpha \log \pi(a'|s') \right).
 \end{equation}
 
 The actor is trained to maximize expected Q-values while encouraging entropy:
 \begin{equation}
-\mathcal{L}_\pi = \mathbb{E}_{s \sim \mathcal{D}} \left[ \alpha \log \pi(a|s) - \min(Q_1, Q_2)(s,a) \right].
+    \mathcal{L}_\pi = \mathbb{E}_{s \sim \mathcal{D}} \left[ \alpha \log \pi(a|s) - \min(Q_1, Q_2)(s,a) \right].
 \end{equation}
 
-\textbf{Entropy Temperature.} 
+\textbf{Entropy Temperature.}
 We support both fixed and automatically learned entropy temperature $\alpha$. When enabled, $\alpha$ is optimized via:
 \begin{equation}
-\mathcal{L}_{\alpha} = -\mathbb{E}_{a \sim \pi} \left[ \alpha (\log \pi(a|s) + \mathcal{H}_{\text{target}}) \right],
+    \mathcal{L}_{\alpha} = -\mathbb{E}_{a \sim \pi} \left[ \alpha (\log \pi(a|s) + \mathcal{H}_{\text{target}}) \right],
 \end{equation}
 where $\mathcal{H}_{\text{target}}$ is typically set proportional to the action dimension, allowing adaptive control of exploration.
 
-\textbf{Training Procedure.} 
+\textbf{Training Procedure.}
 Training follows an off-policy loop with interleaved data collection and updates. Multiple environments are run in parallel to improve sample efficiency. Initially, actions are sampled randomly to populate the replay buffer; afterwards, actions are drawn from the learned policy.
 
 At each iteration, a batch is sampled from the replay buffer, the critic is updated using the soft Bellman target, and the actor is updated using the entropy-regularized objective. Target networks are updated using Polyak averaging:
 \begin{equation}
-\theta_{\text{target}} \leftarrow \tau \theta + (1 - \tau)\theta_{\text{target}}.
+    \theta_{\text{target}} \leftarrow \tau \theta + (1 - \tau)\theta_{\text{target}}.
 \end{equation}
 
 Gradient clipping is optionally applied for stability, and the number of gradient updates per environment step is configurable.
 
-\textbf{Implementation Details.} 
+\textbf{Implementation Details.}
 Observations are normalized to $[0,1]$ during training. The method assumes continuous action spaces, as required by SAC. Training progress is monitored via TensorBoard, and models are periodically checkpointed for reproducibility.
+
+
+\subsection{Results and Discussion}
+
+We evaluate our SAC agent on the Hopper-v5 environment using image-based observations. Figure~\ref{fig:sac_results} shows the evolution of the evaluation reward over training.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{sac_hopper_reward_speed_x.pdf}
+    \caption{Evaluation performance of SAC on Hopper-v5 (smoothed with an exponential moving average)}
+    \label{fig:sac_results}
+\end{figure*}
+
+Figure~\ref{fig:sac_results} shows that the agent is able to steadily improve its performance throughout training. After an initial exploration phase, the reward increases consistently, indicating that the policy successfully learns a stable walking behavior. The learning process is relatively smooth compared to value-based methods, with limited oscillations in performance.
+
+The use of parallel environments ($30$ in our case) significantly accelerates data collection, allowing the agent to gather diverse experiences early in training. Combined with the off-policy nature of SAC and the replay buffer of size $300{,}000$, this results in efficient reuse of past transitions and improved sample efficiency.
+
+Several design choices contribute to the observed performance. The entropy-regularized objective encourages sufficient exploration, particularly in the early stages of training. The use of automatic entropy tuning further stabilizes learning by adapting the exploration-exploitation trade-off dynamically. Additionally, the double Q-network critic reduces overestimation bias, leading to more reliable value estimates.
+
+We also observe that the learned policy achieves stable movement by balancing forward motion with control cost minimization. The reward shaping, including forward velocity and control penalties, encourages smooth and energy-efficient behavior. As training progresses, the agent learns to maintain balance while moving forward consistently, avoiding abrupt or unstable motions.
+
+The training remains sensitive to hyperparameters, particularly the learning rates and the discount factor. The values obtained through Optuna optimization, such as a relatively high discount factor ($\gamma \approx 0.993$) and small actor learning rate, were important for achieving stable convergence. Furthermore, performing multiple gradient updates per environment step ($4$ in our setup) improves data efficiency without destabilizing training.
+
+Overall, SAC demonstrates strong performance on this task, achieving stable and consistent movement behavior within a relatively limited number of environment steps. The combination of entropy regularization, off-policy learning, and efficient use of data makes SAC particularly well-suited for continuous control from high-dimensional observations. Finally, we are currently extending this approach to the more challenging Humanoid environment, where preliminary experiments show promising improvements in learning behavior.
