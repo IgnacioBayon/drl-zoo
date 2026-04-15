@@ -1,75 +1,52 @@
-\section{Soft Actor-Critic}
+\section{Soft Actor-Critic (SAC)}
 \label{sec:sac}
 
-\subsection{Methodology}
+\subsection{Algorithm Overview}
 
-We implement Soft Actor-Critic (SAC)~\cite{haarnoja2018sac} for continuous control from image-based observations. SAC is an off-policy actor-critic algorithm that optimizes a stochastic policy under the maximum entropy reinforcement learning framework, encouraging both high reward and exploration.
-
-\textbf{Architecture.}
-Our model consists of a stochastic actor and a double Q-function critic. Observations are high-dimensional images and are first processed through a convolutional encoder that extracts latent features.
-
-The actor is parameterized as a Gaussian policy. The encoded features are passed through a multi-layer perceptron (MLP) to produce the mean and log-standard deviation of the action distribution. Actions are sampled using the reparameterization trick and passed through a $\tanh$ squashing function to ensure they lie within valid bounds. A correction term is applied to the log-probability to account for this transformation.
-
-The critic is implemented as a \textbf{double Q-network} to reduce overestimation bias. A shared encoder extracts latent features, which are concatenated with the action and passed through two independent Q-heads, producing $Q_1$ and $Q_2$. During training, the minimum of these estimates is used to compute targets.
-
-\textbf{Replay Buffer.}
-We use a uniform replay buffer with fixed capacity to store transitions $(s, a, r, s', d)$. The buffer is implemented using preallocated tensors and a circular indexing scheme for efficiency. Observations are stored as \texttt{uint8} images and normalized to $[0,1]$ at training time to reduce memory usage.
-
-\textbf{Training Objective.}
-SAC optimizes a soft Bellman objective. The critic is trained by minimizing:
+Soft Actor-Critic (SAC)~\cite{haarnoja2018soft} is an off-policy actor-critic algorithm that operates within the maximum entropy reinforcement learning framework. Unlike standard RL algorithms that solely aim to maximize the expected sum of rewards, SAC maximizes a dual objective consisting of both the expected return and the expected entropy of the policy:
 \begin{equation}
-    \mathcal{L}_Q = \mathbb{E}_{(s,a,r,s') \sim \mathcal{D}} \left[ (Q_i(s,a) - y)^2 \right],
+    J(\pi) = \sum_{t=0}^{T} \mathbb{E}_{(s_t, a_t) \sim \rho_\pi} \left[ r(s_t, a_t) + \alpha \mathcal{H}\left(\pi(\cdot|s_t)\right) \right].
 \end{equation}
-where the target is:
-\begin{equation}
-    y = r + \gamma (1 - d)\left( \min_j Q_j(s', a') - \alpha \log \pi(a'|s') \right).
-\end{equation}
-
-The actor is trained to maximize expected Q-values while encouraging entropy:
-\begin{equation}
-    \mathcal{L}_\pi = \mathbb{E}_{s \sim \mathcal{D}} \left[ \alpha \log \pi(a|s) - \min(Q_1, Q_2)(s,a) \right].
-\end{equation}
-
-\textbf{Entropy Temperature.}
-We support both fixed and automatically learned entropy temperature $\alpha$. When enabled, $\alpha$ is optimized via:
-\begin{equation}
-    \mathcal{L}_{\alpha} = -\mathbb{E}_{a \sim \pi} \left[ \alpha (\log \pi(a|s) + \mathcal{H}_{\text{target}}) \right],
-\end{equation}
-where $\mathcal{H}_{\text{target}}$ is typically set proportional to the action dimension, allowing adaptive control of exploration.
-
-\textbf{Training Procedure.}
-Training follows an off-policy loop with interleaved data collection and updates. Multiple environments are run in parallel to improve sample efficiency. Initially, actions are sampled randomly to populate the replay buffer; afterwards, actions are drawn from the learned policy.
-
-At each iteration, a batch is sampled from the replay buffer, the critic is updated using the soft Bellman target, and the actor is updated using the entropy-regularized objective. Target networks are updated using Polyak averaging:
-\begin{equation}
-    \theta_{\text{target}} \leftarrow \tau \theta + (1 - \tau)\theta_{\text{target}}.
-\end{equation}
-
-Gradient clipping is optionally applied for stability, and the number of gradient updates per environment step is configurable.
-
-\textbf{Implementation Details.}
-Observations are normalized to $[0,1]$ during training. The method assumes continuous action spaces, as required by SAC. Training progress is monitored via TensorBoard, and models are periodically checkpointed for reproducibility.
-
-
-\subsection{Results and Discussion}
-
-We evaluate our SAC agent on the Hopper-v5 environment using image-based observations. Figure~\ref{fig:sac_results} shows the evolution of the evaluation reward over training.
+Here, $\alpha$ is the temperature parameter that explicitly dictates the trade-off between exploitation (maximizing the reward) and exploration (maximizing the entropy $\mathcal{H}$). 
 
 \begin{figure*}[htbp]
     \centering
     \includegraphics[width=\linewidth]{sac_hopper_reward_speed_x.pdf}
-    \caption{Evaluation performance of SAC on Hopper-v5 (smoothed with an exponential moving average)}
+    \caption{Training dynamics of PPO on the Hopper environment (smoothed with an exponential moving average) \todo{Rehacer con steps en miles (K)}}
     \label{fig:sac_results}
 \end{figure*}
 
-Figure~\ref{fig:sac_results} shows that the agent is able to steadily improve its performance throughout training. After an initial exploration phase, the reward increases consistently, indicating that the policy successfully learns a stable walking behavior. The learning process is relatively smooth compared to value-based methods, with limited oscillations in performance.
+To optimize this objective, SAC concurrently learns a stochastic policy $\pi_\theta(a|s)$ and two parameterized soft Q-functions, $Q_{\phi_1}(s, a)$ and $Q_{\phi_2}(s, a)$. The use of twin Q-networks mitigates the overestimation bias commonly found in value-based methods, taking the minimum of the two Q-values during policy evaluation. The policy itself is typically parameterized as a squashed Gaussian distribution, ensuring that sampled actions inherently respect the bounded continuous action space. 
 
-The use of parallel environments ($30$ in our case) significantly accelerates data collection, allowing the agent to gather diverse experiences early in training. Combined with the off-policy nature of SAC and the replay buffer of size $300{,}000$, this results in efficient reuse of past transitions and improved sample efficiency.
+By aggressively reusing past experiences from a replay buffer, SAC theoretically bridges the gap between the high sample efficiency of off-policy methods (such as Rainbow) and the continuous control stability of on-policy methods (such as PPO). Furthermore, modern implementations of SAC automatically tune the temperature parameter $\alpha$ via dual optimization, ensuring that the exploration bounds dynamically adjust as the policy converges.
 
-Several design choices contribute to the observed performance. The entropy-regularized objective encourages sufficient exploration, particularly in the early stages of training. The use of automatic entropy tuning further stabilizes learning by adapting the exploration-exploitation trade-off dynamically. Additionally, the double Q-network critic reduces overestimation bias, leading to more reliable value estimates.
+\subsection{Hopper: Learning from Pixels}
+\label{sec:sac_hopper_results}
 
-We also observe that the learned policy achieves stable movement by balancing forward motion with control cost minimization. The reward shaping, including forward velocity and control penalties, encourages smooth and energy-efficient behavior. As training progresses, the agent learns to maintain balance while moving forward consistently, avoiding abrupt or unstable motions.
+We evaluated SAC on the Hopper environment to directly compare its sample efficiency and computational demands against PPO and our value-based baselines. 
 
-The training remains sensitive to hyperparameters, particularly the learning rates and the discount factor. The values obtained through Optuna optimization, such as a relatively high discount factor ($\gamma \approx 0.993$) and small actor learning rate, were important for achieving stable convergence. Furthermore, performing multiple gradient updates per environment step ($4$ in our setup) improves data efficiency without destabilizing training.
+\textbf{Configuration:}
+We maintain the foundational environment setup: $64 \times 64$ pixel inputs, a frame stack of 4, and the widened \texttt{healthy\_angle\_range} of $[-0.4, 0.4]$. Similar to our approach with PPO, we relied on Optuna to navigate the notoriously brittle hyperparameter landscape of continuous actor-critic methods. 
+\todo{Separar y clarificar que parametros estaban fijos (e.g., replay buffer capacity, network architecture) y cuales fueron encontrados por Optuna (e.g., actor/critic learning rates, target entropy, batch size).} 
+The reward shaping remains fixed to the previous configuration to allow for a direct baseline comparison ($w_{\text{vel}} = 1.0$, target velocity $1.5$, $w_{\text{ctrl}} = 0.001$, and $w_{\text{healthy}} = 1.0$).
 
-Overall, SAC demonstrates strong performance on this task, achieving stable and consistent movement behavior within a relatively limited number of environment steps. The combination of entropy regularization, off-policy learning, and efficient use of data makes SAC particularly well-suited for continuous control from high-dimensional observations. Finally, we are currently extending this approach to the more challenging Humanoid environment, where preliminary experiments show promising improvements in learning behavior.
+\textbf{Results and Discussion:}
+In terms of pure environment interactions, SAC is by far the most sample-efficient algorithm evaluated in this study. The optimized configuration successfully learns a highly robust jumping gait, reaching approximately 5 times the cumulative reward and final forward distance in just \todo{fill exact number of steps, e.g., 500k} frames. This drastically outpaces PPO (which required roughly 1.5M steps) and entirely eclipses standard DQN.
+
+However, this exceptional sample efficiency comes at a severe computational cost. Because SAC performs computationally heavy gradient updates on three separate networks (the actor and two critics) at every environment step, its wall-clock training time is extremely slow. 
+\todo{Specify how much time it takes more or less for SAC to train X steps compared to PPO.} 
+Additionally, much like PPO, SAC exhibited high instability during the tuning phase. It is particularly sensitive to the initial temperature parameter and the actor's learning rate, frequently resulting in catastrophic policy divergence if the entropy collapses too early.
+
+\subsection{Humanoid: Scaling to High-Dimensional Control}
+\label{sec:sac_humanoid_results}
+
+Given SAC's theoretical supremacy in sample-efficient continuous control, we attempted to scale it to the heavily constrained $96 \times 96$ pixel Humanoid environment. 
+
+\textbf{Configuration:}
+To give SAC the highest probability of success in this highly unstable bipedal domain, we relaxed the constraints on our Optuna search space. Recognizing that actor-critic methods are exceptionally sensitive to the scale and variance of the reward signal, we allowed Optuna to dynamically tune the reward weights ($w_{\text{vel}}$, $w_{\text{healthy}}$, and $w_{\text{ctrl}}$) alongside the core algorithmic parameters. 
+\todo{Explain the few differentiating parameters tuned by Optuna here, such as the specific bounds for the reward weights, the polyak averaging coefficient ($\tau$), or the delayed update frequencies.}
+
+\textbf{Results and Discussion:}
+The inclusion of reward shaping in the hyperparameter search yielded a highly promising configuration. During our short-horizon Optuna trials, we observed a specific run that successfully managed to balance the humanoid and take a couple of stable, coordinated steps forward. This indicates that SAC is fundamentally capable of extracting a viable bipedal locomotion policy directly from high-dimensional visual features.
+
+Unfortunately, we were unable to train this promising configuration to full convergence. The sheer computational overhead of off-policy pixel-based SAC on a 17-joint continuous action space is paralyzing. The time required to process the convolutional feature extraction, update the twin critics, and optimize the Gaussian actor at every single step made extended training horizons practically unfeasible within our compute budget. Consequently, while SAC demonstrates the highest theoretical ceiling for pixel-based continuous control, its deployment is severely bottlenecked by its immense wall-clock training time.

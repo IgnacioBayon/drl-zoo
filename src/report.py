@@ -109,6 +109,10 @@ def format_steps_in_millions(ax):
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{x / 1e6:.0f}M"))
 
 
+def format_steps_in_thousands(ax):
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{x / 1e3:.0f}K"))
+
+
 def style_report_axes(ax):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -269,7 +273,11 @@ def plot_train_reward_speed_final_x(
         min_p, max_p = percentiles.get(metric, (5, 95))
         axs[i].set_ylim(np.percentile(values, min_p), np.percentile(values, max_p))
 
-        format_steps_in_millions(axs[i])
+        if steps.max() > 5e6:
+            format_steps_in_millions(axs[i])
+        else:
+            format_steps_in_thousands(axs[i])
+
         style_report_axes(axs[i])
 
     plt.tight_layout()

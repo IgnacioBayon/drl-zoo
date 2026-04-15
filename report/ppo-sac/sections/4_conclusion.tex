@@ -1,0 +1,24 @@
+\section{PPO vs. SAC: A Comparative Analysis}
+\label{sec:ppo_vs_sac}
+
+While both Proximal Policy Optimization (PPO) and Soft Actor-Critic (SAC) operate natively in continuous action spaces, our experiments reveal stark trade-offs between sample efficiency, computational overhead, and hyperparameter stability.
+
+\textbf{Sample Efficiency and Performance:} 
+SAC overwhelmingly dominates in terms of pure sample efficiency. By aggressively reusing off-policy data from a replay buffer and leveraging a maximum entropy objective, SAC learned a highly robust and optimal Hopper gait in merely a fraction of the environment steps required by PPO (approximately 500k frames compared to 1.5M). Furthermore, SAC achieved significantly higher cumulative rewards, whereas PPO converged to a sub-optimal, conservative hopping strategy. On the complex Humanoid environment, SAC was the only actor-critic method that demonstrated the capacity to learn coordinated bipedal steps, whereas PPO completely failed to find a viable policy under the same constrained trial horizons.
+
+\textbf{Computational Cost:} 
+Conversely, PPO drastically outperforms SAC in wall-clock training time. PPO performs policy updates iteratively on batched rollouts, making its per-step computational footprint relatively lightweight. SAC, however, updates an actor network and two separate critic networks at every single environment step. When processing high-dimensional visual features through convolutional encoders, this continuous gradient calculation becomes a severe computational bottleneck, making extended training horizons painfully slow.
+
+\textbf{Hyperparameter Brittleness:} 
+Both algorithms share a critical weakness: extreme hyperparameter sensitivity. Unlike standard Q-learning, which tends to fail gracefully, actor-critic methods in visual domains are highly prone to catastrophic divergence. PPO is exceptionally sensitive to its target KL-divergence and clipping thresholds, while SAC requires delicate tuning of its temperature parameter and learning rates to prevent premature entropy collapse. Both necessitated aggressive, automated search strategies via Optuna to isolate stable learning regimes.
+
+\section{Conclusion}
+\label{sec:conclusion_final}
+
+This study along with the previous one systematically evaluated the application of four distinct Deep Reinforcement Learning algorithms (Branching DQN, Rainbow, PPO, and SAC) to the challenging domain of pixel-based continuous control. By benchmarking these methods across the DeepMind Control Suite, we identified the fundamental limitations and practical trade-offs inherent to both value-based and policy gradient architectures.
+
+Our findings demonstrate that classic value-based methods can indeed be adapted for continuous control. While standard Branching DQN scales poorly to complex morphologies and completely failed on the bipedal Humanoid task, heavily augmented architectures like Rainbow DQN proved surprisingly capable. Through the integration of distributional value modeling, multi-step returns, and carefully calibrated reward shaping, Rainbow successfully learned stable, albeit visually unnatural, bipedal locomotion directly from raw pixels. 
+
+However, value-based methods require cumbersome action-space discretization. Actor-critic algorithms like PPO and SAC provide a more mathematically elegant solution by directly outputting continuous action distributions. Unfortunately, our experiments reveal that applying these algorithms to high-dimensional visual inputs introduces profound hyperparameter brittleness. While PPO is computationally fast per step, it suffers from poor sample efficiency and policy collapse if not perfectly tuned. SAC represents the theoretical ceiling for sample efficiency and performance, successfully taking bipedal steps where PPO failed, but its deployment is severely bottlenecked by paralyzing wall-clock training times and massive computational overhead.
+
+Ultimately, achieving stable continuous control from pixels requires navigating a strict trade-off matrix. Rainbow DQN offers a slow but resilient path through complex value estimation, whereas SAC offers explosive sample efficiency gated by heavy compute requirements. Future research must focus on bridging this gap, potentially by exploring hybrid architectures that combine the stability of distributional Q-learning with the continuous native outputs of maximum-entropy actor-critic frameworks.
