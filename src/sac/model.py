@@ -48,6 +48,7 @@ class Actor(nn.Module):
         action_high: list[float] | torch.Tensor | None = None,
         log_std_min: float = -10.0,
         log_std_max: float = 2.0,
+        encoder: Encoder | None = None,
     ) -> None:
         super().__init__()
         self.log_std_min = log_std_min
@@ -70,7 +71,11 @@ class Actor(nn.Module):
         self.register_buffer("action_bias", (action_high_t + action_low_t) / 2.0)
 
         # Extracts visual features
-        self.encoder = Encoder(in_channels)
+        if encoder is not None:
+            self.encoder = encoder
+        else:
+            self.encoder = Encoder(in_channels)
+
         # Further processes latent features before outputting Gaussian parameters
         self.trunk = build_mlp(
             Encoder.OUT_FEATURES,
@@ -175,9 +180,14 @@ class DoubleCritic(nn.Module):
         in_channels: int,
         action_dim: int,
         hidden_dims: list[int],
+        encoder: Encoder | None = None,
     ) -> None:
         super().__init__()
-        self.encoder = Encoder(in_channels)
+        if encoder is not None:
+            self.encoder = encoder
+        else:
+            self.encoder = Encoder(in_channels)
+
         self.q1 = CriticHead(Encoder.OUT_FEATURES, action_dim, hidden_dims)
         self.q2 = CriticHead(Encoder.OUT_FEATURES, action_dim, hidden_dims)
 

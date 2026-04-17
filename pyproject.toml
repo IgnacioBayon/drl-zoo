@@ -11,11 +11,15 @@ dependencies = [
     "gymnasium[mujoco]>=1.2.3",
     "imageio[ffmpeg]>=2.37.2",
     "tensorboard>=2.18.0",
+    "optuna>=4.4.0",
     "torch>=2.0.0",
     "torchvision>=0.15.0",
     "tqdm>=4.67.3",
     "setuptools<82",
     "opencv-python>=4.13.0.92",
+    "plotly>=6.6.0",
+    "scikit-learn>=1.8.0",
+    "optuna-dashboard>=0.20.0",
 ]
 
 [[tool.uv.index]]

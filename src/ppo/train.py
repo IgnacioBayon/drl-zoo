@@ -122,9 +122,8 @@ def _train_step(
         entropy=entropy,
     )
 
-    # FIX: sign was previously flipped (old - new). Correct is (new - old),
-    # which is positive when the policy moves away from the old one.
-    approx_kl = (log_probs.detach() - old_log_probs.detach()).mean()
+    ratio = torch.exp(log_probs.detach() - old_log_probs.detach())
+    approx_kl = ((ratio - 1.0) - (log_probs.detach() - old_log_probs.detach())).mean()
 
     if not torch.isfinite(loss):
         optimizer.zero_grad(set_to_none=True)
@@ -227,8 +226,8 @@ def _train_loop(
         all_log_probs = torch.zeros(T, num_envs, device=device)
         all_values = torch.zeros(T, num_envs, device=device)
         all_rewards = torch.zeros(T, num_envs, device=device)
-        all_terminated = torch.zeros(T, num_envs, device=device)
-        all_truncated = torch.zeros(T, num_envs, device=device)
+        all_terminated = torch.zeros(T, num_envs, device=device, dtype=torch.bool)
+        all_truncated = torch.zeros(T, num_envs, device=device, dtype=torch.bool)
         # FIX: stores the correct next-state value at each timestep,
         # overriding with the true final-state value when an env is truncated.
         all_next_values = torch.zeros(T, num_envs, device=device)
@@ -255,17 +254,20 @@ def _train_loop(
                     rewards, dtype=torch.float32, device=device
                 )
                 all_terminated[t] = torch.tensor(
-                    terminated, dtype=torch.float32, device=device
+                    terminated, dtype=torch.bool, device=device
                 )
                 all_truncated[t] = torch.tensor(
-                    truncated, dtype=torch.float32, device=device
+                    truncated, dtype=torch.bool, device=device
                 )
 
-                # FIX: for truncated envs, bootstrap from the true final
-                # observation (before the auto-reset) instead of the reset
-                # state that will appear in obs_np. Gymnasium stores this
-                # in infos["final_observation"][i] automatically.
-                next_vals_t = value.squeeze(-1).clone()
+                # Compute V(s_{t+1}) from the next observation returned by env.step().
+                # For truncated envs, override with V(final_observation) before reset.
+                next_obs_t = torch.as_tensor(
+                    obs_np, dtype=torch.float32, device=device
+                ).div(255.0)
+                _, _, next_vals_t = policy(next_obs_t)
+                next_vals_t = next_vals_t.squeeze(-1)
+
                 for i in np.where(truncated)[0]:
                     final_obs_i = infos["final_observation"][i]
                     fo = (
@@ -275,6 +277,11 @@ def _train_loop(
                     )
                     _, _, v_final = policy(fo)
                     next_vals_t[i] = v_final.squeeze()
+
+                # For terminated transitions, no bootstrap
+                for i in np.where(terminated)[0]:
+                    next_vals_t[i] = 0.0
+
                 all_next_values[t] = next_vals_t
 
                 worker_returns += rewards.astype(np.float64)
@@ -323,13 +330,8 @@ def _train_loop(
         # Shapes expected by GAE: [B, T] — we use [num_envs, T]
         rewards_bt = all_rewards.T  # [num_envs, T]
         values_bt = all_values.T  # [num_envs, T]
-        dones_bt = all_terminated.T  # [num_envs, T]
-
-        # FIX: use all_next_values (which has correct truncation bootstraps)
-        # instead of shifting values_bt, which used the post-reset state value.
-        next_values_bt = torch.cat(
-            [all_next_values.T[:, :-1], next_value.unsqueeze(1)], dim=1
-        )  # [num_envs, T]
+        dones_bt = (all_terminated | all_truncated).float().T  # [num_envs, T]
+        next_values_bt = all_next_values.T  # [num_envs, T]
 
         advantages_bt = generalized_advantage_estimation(
             rewards=rewards_bt,
