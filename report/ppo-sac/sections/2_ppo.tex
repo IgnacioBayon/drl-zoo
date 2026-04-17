@@ -3,7 +3,7 @@
 
 \subsection{Algorithm Overview}
 
-Proximal Policy Optimization (PPO)~\cite{schulman2017proximal} is an on-policy policy gradient method that directly optimizes a stochastic policy $\pi_\theta(a|s)$ by maximizing the expected discounted return. To prevent destructively large policy updates, PPO introduces a clipped surrogate objective:
+Proximal Policy Optimization (PPO)~\cite{schulman2017ppo} is an on-policy policy gradient method that directly optimizes a stochastic policy $\pi_\theta(a|s)$ by maximizing the expected discounted return. To prevent destructively large policy updates, PPO introduces a clipped surrogate objective:
 \begin{equation}
     \mathcal{L}^{\text{CLIP}}(\theta) = \mathbb{E}_t \left[ \min\left( r_t(\theta)\hat{A}_t,\; \text{clip}(r_t(\theta), 1-\varepsilon, 1+\varepsilon)\hat{A}_t \right) \right],
 \end{equation}
@@ -26,12 +26,11 @@ Unlike value-based algorithms like DQN, PPO operates natively in continuous acti
 We first validate PPO on the Hopper task, maintaining identical environment and reward configurations to our previous value-based experiments to ensure a fair comparison.
 
 \textbf{Configuration:}
-The agent observes $64 \times 64$ pixel inputs with a frame stack of 4. We deploy 30 parallel environments to increase data throughput and stabilize advantage estimation, keeping the widened \texttt{healthy\_angle\_range} of $[-0.4, 0.4]$. The reward shaping remains focused on a target forward velocity of $1.5$ units/s ($w_{\text{vel}} = 1.0$), with a smoothness penalty ($w_{\text{ctrl}} = 0.001$) and a survival bonus ($w_{\text{healthy}} = 1.0$). PPO is trained for 1.5 million environment frames. Rollouts collect 256 steps per parallel environment before executing 10 epochs of minibatch updates. 
-\todo{Separar y clarificar que parametros han sido encontrados por optuna y cuales estaban fijos. Diria que los de abajo son de optuna.}
-We utilize a clipping threshold of $\varepsilon = 0.1$, a GAE parameter of $\lambda = 0.975$, and a discount factor of $\gamma = 0.995$. The policy and value networks share a convolutional encoder but maintain separate MLP heads, optimized via Adam with a learning rate of $4 \times 10^{-4}$.
+The agent observes $64 \times 64$ pixel inputs with a frame stack of 4. We deploy 30 parallel environments to increase data throughput and stabilize advantage estimation, keeping the widened \texttt{healthy\_angle\_range} of $[-0.4, 0.4]$. The reward shaping remains focused on a target forward velocity of $1.5$ units/s ($w_{\text{vel}} = 1.0$), with a smoothness penalty ($w_{\text{ctrl}} = 0.001$) and a survival bonus ($w_{\text{healthy}} = 1.0$). PPO is trained for 1.5 million environment frames. Rollouts collect 256 steps per parallel environment before executing 10 epochs of minibatch updates. These architectural and environment parameters were kept fixed throughout training.
+The remaining PPO-specific hyperparameters were selected via Optuna: a clipping threshold of $\varepsilon = 0.1$, a GAE parameter of $\lambda = 0.975$, and a discount factor of $\gamma = 0.995$. The policy and value networks share a convolutional encoder but maintain separate MLP heads, optimized via Adam with a learning rate of $4 \times 10^{-4}$.
 
 \textbf{Results and Discussion:}
-PPO demonstrates vastly superior sample efficiency compared to both BDQN and Rainbow. In less than 1.5 million steps, the agent successfully learns to chain multiple forward hops without falling, whereas standard DQN required tens of millions of frames ($\sim 40M$) to reach a similar milestone. Rainbow achieves similar results in the same number of frames, however training is much slower.
+PPO demonstrates vastly superior sample efficiency compared to both BDQN and Rainbow. In less than 1.5 million steps, the agent successfully learns to chain multiple forward hops without falling, whereas standard DQN required tens of millions of frames ($\sim 40M$) to reach a similar milestone. Rainbow achieves similar results in the same number of frames, but training is much slower.
 
 However, the learned behavior is functionally sub-optimal. The agent's step-wise velocity converges to approximately $1.0$ units/s, falling short of the $1.5$ target. Rather than developing the rapid, fluid momentum observed in our best Rainbow models (which naturally exceeded the target), PPO discovers a more conservative strategy. It fumbles slightly between jumps to deliberately regain its balance before committing to the next hop. While the upward trajectory of the learning curve suggests further velocity improvements are possible with longer training horizons, we also noted severe hyperparameter brittleness. Specifically, the target KL-divergence threshold was exceptionally difficult to tune, often leading to premature policy collapse if not perfectly calibrated.
 
