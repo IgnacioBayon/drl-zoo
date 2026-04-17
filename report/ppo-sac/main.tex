@@ -76,6 +76,7 @@
 
 \begin{abstract}
 We study the application of Proximal Policy Optimization (PPO) and Soft Actor-Critic (SAC) to pixel-based continuous control tasks. While theoretically superior for continuous action spaces, PPO and SAC exhibit extreme hyperparameter instability when learning directly from high-dimensional visual observations. To address this, we leverage the Optuna framework to execute automated, short-horizon hyperparameter searches, rapidly identifying and pruning diverging configurations. We successfully scale these algorithms to full training horizons and compare their performance, sample efficiency, and stability against our prior Q-learning baselines.
+Code available at \url{https://github.com/IgnacioBayon/drl-zoo}
 \end{abstract}
 
 \input{sections/1_introduction.tex}
