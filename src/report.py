@@ -273,10 +273,7 @@ def plot_train_reward_speed_final_x(
         min_p, max_p = percentiles.get(metric, (5, 95))
         axs[i].set_ylim(np.percentile(values, min_p), np.percentile(values, max_p))
 
-        if steps.max() > 5e6:
-            format_steps_in_millions(axs[i])
-        else:
-            format_steps_in_thousands(axs[i])
+        format_steps_in_thousands(axs[i])
 
         style_report_axes(axs[i])
 
@@ -289,7 +286,7 @@ def plot_train_reward_speed_final_x(
 def main() -> None:
     """Run report generation."""
     plot_train_reward_speed_final_x(
-        log_path="outputs/hopper-sac/logs/events.out.tfevents.1775493208.AA25LABIAP04.2836733.0",
+        log_path="outputs/optuna/hopper-sac-1/trial_0012/logs/events.out.tfevents.1775493208.AA25LABIAP04.2836733.0",
         percentiles={"Speed": (1, 100), "Reward": (0, 99.5), "Final x": (0, 99.5)},
         alpha=0.05,
     )

@@ -222,3 +222,6 @@ outputs/
 *.fls
 *.out
 *.gz
+
+optuna.db
+videos-upload/
