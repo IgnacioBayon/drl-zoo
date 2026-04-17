@@ -1,6 +1,15 @@
 \section{Proximal Policy Optimization (PPO)}
 \label{sec:ppo}
 
+% --- HOPPER RESULTS PLOT ---
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{images/ppo_hopper_reward_speed_x.pdf}
+    \caption{Training dynamics of PPO on the Hopper environment. (smoothed with an exponential moving average).}
+    \label{fig:ppo_hopper_results}
+\end{figure*}
+% ---------------------------
+
 \subsection{Algorithm Overview}
 
 Proximal Policy Optimization (PPO)~\cite{schulman2017ppo} is an on-policy policy gradient method that directly optimizes a stochastic policy $\pi_\theta(a|s)$ by maximizing the expected discounted return. To prevent destructively large policy updates, PPO introduces a clipped surrogate objective:

@@ -12,7 +12,7 @@ Here, $\alpha$ is the temperature parameter that explicitly dictates the trade-o
 \begin{figure*}[htbp]
     \centering
     \includegraphics[width=\linewidth]{sac_hopper_reward_speed_x.pdf}
-    \caption{Training dynamics of SAC on the Hopper environment (smoothed with an exponential moving average) \todo{Rehacer con steps en miles (K)}}
+    \caption{Training dynamics of SAC on the Hopper environment (smoothed with an exponential moving average)}
     \label{fig:sac_results}
 \end{figure*}
 
@@ -26,15 +26,13 @@ By aggressively reusing past experiences from a replay buffer, SAC theoretically
 We evaluated SAC on the Hopper environment to directly compare its sample efficiency and computational demands against PPO and our value-based baselines. 
 
 \textbf{Configuration:}
-We maintain the foundational environment setup: $64 \times 64$ pixel inputs, a frame stack of 4, and the widened \texttt{healthy\_angle\_range} of $[-0.4, 0.4]$. Similar to our approach with PPO, we relied on Optuna to navigate the notoriously brittle hyperparameter landscape of continuous actor-critic methods. 
-\todo{Separar y clarificar que parametros estaban fijos (e.g., replay buffer capacity, network architecture) y cuales fueron encontrados por Optuna (e.g., actor/critic learning rates, target entropy, batch size).} 
-The reward shaping remains fixed to the previous configuration to allow for a direct baseline comparison ($w_{\text{vel}} = 1.0$, target velocity $1.5$, $w_{\text{ctrl}} = 0.001$, and $w_{\text{healthy}} = 1.0$).
+We maintain the foundational environment setup: $64 \times 64$ pixel inputs, a frame stack of 4, and the widened healthy\_angle\_range of $[-0.4, 0.4]$. Similar to our approach with PPO, we relied on Optuna to navigate the notoriously brittle hyperparameter landscape of continuous actor-critic methods. 
+The fixed components include the replay buffer capacity and the network backbone configuration. Optuna tuned the following training parameters: actor\_lr = $10^{-5}$, critic\_lr = $7.8 \times 10^{-5}$, alpha\_lr = $4.5 \times 10^{-5}$, gamma = $0.99$, tau = $0.009$, batch\_size = $256$, gradient\_steps = $4$, start\_train\_after = $10000$, and share\_encoder = False.
 
 \textbf{Results and Discussion:}
-In terms of pure environment interactions, SAC is by far the most sample-efficient algorithm evaluated in this study. The optimized configuration successfully learns a highly robust jumping gait, reaching approximately 5 times the cumulative reward and final forward distance in just \todo{fill exact number of steps, e.g., 500k} frames. This drastically outpaces PPO (which required roughly 1.5M steps) and entirely eclipses standard DQN.
+In terms of pure environment interactions, SAC is by far the most sample-efficient algorithm evaluated in this study. The optimized configuration successfully learns a highly robust jumping gait, reaching approximately 5 times the cumulative reward and final forward distance in just 500k frames. This drastically outpaces PPO (which required roughly 1.5M steps) and entirely eclipses standard DQN.
 
-However, this exceptional sample efficiency comes at a severe computational cost. Because SAC performs computationally heavy gradient updates on three separate networks (the actor and two critics) at every environment step, its wall-clock training time is extremely slow. 
-\todo{Specify how much time it takes more or less for SAC to train X steps compared to PPO.} 
+However, this exceptional sample efficiency comes at a severe computational cost. Because SAC performs computationally heavy gradient updates on three separate networks (the actor and two critics) at every environment step, its wall-clock training time is extremely slow, about 50x slower than PPO on the same number of environment frames.
 Additionally, much like PPO, SAC exhibited high instability during the tuning phase. It is particularly sensitive to the initial temperature parameter and the actor's learning rate, frequently resulting in catastrophic policy divergence if the entropy collapses too early.
 
 \subsection{Humanoid: Scaling to High-Dimensional Control}
@@ -44,7 +42,7 @@ Given SAC's theoretical supremacy in sample-efficient continuous control, we att
 
 \textbf{Configuration:}
 To give SAC the highest probability of success in this highly unstable bipedal domain, we relaxed the constraints on our Optuna search space. Recognizing that actor-critic methods are exceptionally sensitive to the scale and variance of the reward signal, we allowed Optuna to dynamically tune the reward weights ($w_{\text{vel}}$, $w_{\text{healthy}}$, and $w_{\text{ctrl}}$) alongside the core algorithmic parameters. 
-\todo{Explain the few differentiating parameters tuned by Optuna here, such as the specific bounds for the reward weights, the polyak averaging coefficient ($\tau$), or the delayed update frequencies.}
+Tuning reward weights proved critical for SAC's performance, improving learning on the humanoid environment. However, the computational demands of off-policy actor-critic methods on high-dimensional pixel inputs made it impossible to conduct extended training runs. We were limited to short-horizon trials (100k environment steps) to rapidly prune diverging configurations, which is insufficient for fully converging a stable movement policy in this complex environment.
 
 \textbf{Results and Discussion:}
 The inclusion of reward shaping in the hyperparameter search yielded a highly promising configuration. During our short-horizon Optuna trials, we observed a specific run that successfully managed to balance the humanoid and take a couple of stable, coordinated steps forward. This indicates that SAC is fundamentally capable of extracting a viable bipedal locomotion policy directly from high-dimensional visual features.
