@@ -1,0 +1,90 @@
+\documentclass{article}
+
+% --- 1. Encoding & Fonts ---
+\usepackage[T1]{fontenc}
+\usepackage{microtype}      % Improves spacing/kerning
+
+% --- 2. Math & Symbols ---
+\usepackage{amsmath, amssymb, amsthm, amsfonts} % Core math
+\usepackage{mathtools, bm, bbm}                 % Tools, bold math, indicator 1
+\usepackage{textcomp} % Fix warning
+\usepackage{nicefrac, gensymb, chngcntr}        % Fractions, degree symbol, counters
+
+% --- 3. Figures & Graphics ---
+\usepackage{graphicx, wrapfig, placeins}        % Images, wrapping, FloatBarrier
+\usepackage{caption, subcaption}                % Caption formatting
+\usepackage{tikz, color}                        % Drawing & Color (epsfig removed)
+\graphicspath{{images/}}
+
+% --- 4. Tables & Lists ---
+\usepackage{booktabs, multirow, makecell}       % Prof. tables, spanning rows/cells
+\usepackage{enumitem}                           % Customizable lists
+\usepackage{url}                                % URL formatting
+
+% --- 5. Hyperref (Must load BEFORE ICML style) ---
+\usepackage{hyperref}
+
+% --- 6. ICML Style (Loads natbib automatically) ---
+% Replace 'icml2024' with your specific year (e.g., icml2025, icml2026)
+% usepackage[accepted]{icml2024} % Use [accepted] if camera-ready
+\usepackage[accepted]{icml2026}
+
+
+\newcommand{\commento}[1]{\textcolor{red}{[\textit{#1}]}} \newcommand{\ting}[1]{\textcolor{red}{[TC: \textit{#1}]}} \newcommand{\mohammad}[1]{\textcolor{blue}{(MN: #1)}}
+\newcommand{\todo}[1]{\textcolor{red}{[\textit{TODO: #1}]}} 
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{definition}{Definition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}{Corollary}\newtheorem{proposition}{Proposition}\newcommand{\one}[1]{\mathbbm{1}_{[#1]}}
+
+\makeatletter
+\renewcommand{\ICML@appearing}{}
+\makeatother
+
+
+\begin{document}
+
+\twocolumn[
+    \icmltitle{DreamerV3: Learning World Models for Imagination-Based Reinforcement Learning}
+
+    \icmlsetsymbol{equal}{*}
+
+  \begin{icmlauthorlist}
+    \icmlauthor{Sergio Herreros Pérez}{icai}
+    \icmlauthor{Adrián López-Lanchares Echezarreta}{icai}
+    \icmlauthor{Ignacio Bayón Jiménez-Ugarte}{icai}
+  \end{icmlauthorlist}
+
+% corresponding author
+  \icmlcorrespondingauthor{Sergio Herreros Pérez}{sergio.herreros@alu.comillas.edu}
+  \icmlcorrespondingauthor{Adrián López-Lanchares Echezarreta}{adrianlanchares@alu.icai.comillas.edu}
+  \icmlcorrespondingauthor{Ignacio Bayón Jiménez-Ugarte}{ibayon@alu.comillas.edu}
+
+    \icmlaffiliation{icai}{Master in Artificial Intelligence, Universidad Pontificia Comillas (ICAI)}
+
+    \icmlkeywords{World Models, Imagination, Reinforcement Learning}
+
+    \vskip 0.3in
+]
+\setlength{\textfloatsep}{0.15in}
+
+\printAffiliationsAndNotice{}
+
+\begin{abstract}
+Hola
+\end{abstract}
+
+\input{sections/2_dreamer.tex}
+
+
+% -------------------------
+% References
+% -------------------------
+\bibliographystyle{icml2026}
+\bibliography{references}
+
+\end{document}
