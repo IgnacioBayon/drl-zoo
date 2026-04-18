@@ -536,6 +536,12 @@ class Dreamer(nn.Module):
             to_f32(data["is_terminal"]),
             to_f32(data["reward"]),
         )
+        if last.dim() == 2:
+            last = last.unsqueeze(-1)
+        if term.dim() == 2:
+            term = term.unsqueeze(-1)
+        if reward.dim() == 2:
+            reward = reward.unsqueeze(-1)
         feat = self.rssm.get_feat(post_stoch, post_deter)
         boot = ret[:, 0].reshape(B, T, 1)
         value = self._frozen_value(feat).mode()
