@@ -50,7 +50,10 @@ def train_dreamer(config: DictConfig) -> None:
         config.env,
         train_cfg,
         mode="train",
+        eval=True,
     )
+    atexit.register(lambda: train_envs.close())
+    atexit.register(lambda: eval_envs.close())
 
     print("Simulate agent.")
     agent = Dreamer(
