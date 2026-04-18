@@ -4,10 +4,10 @@ device: auto
 model:
   act_entropy: 3e-4
   kl_free: 1.0
-  imag_horizon: 15
-  horizon: 333
+  imag_horizon: 10
+  horizon: 166
   lamb: 0.95
-  compile: true
+  compile: false
   log_grads: false
   device: ${train.device}
   rep_loss: r2dreamer
@@ -56,14 +56,14 @@ model:
       bilinear: true
 
   rssm:
-    stoch: 32
-    deter: 2048
-    hidden: 256
-    discrete: 16
-    img_layers: 2
+    stoch: 16
+    deter: 768
+    hidden: 128
+    discrete: 8
+    img_layers: 1
     obs_layers: 1
     dyn_layers: 1
-    blocks: 8
+    blocks: 4
     act: SiLU
     norm: true
     unimix_ratio: 0.01
@@ -75,8 +75,8 @@ model:
     cnn_keys: ${env.encoder.cnn_keys}
     mlp:
       shape: null
-      layers: 3
-      units: 256
+      layers: 2
+      units: 128
       act: SiLU
       norm: true
       device: ${train.device}
@@ -88,8 +88,8 @@ model:
       norm: true
       kernel_size: 5
       minres: 4
-      depth: 16
-      mults: [2, 3, 4, 4]
+      depth: 8
+      mults: [2, 3, 3, 4]
 
   decoder:
     mlp_keys: ${env.decoder.mlp_keys}
@@ -100,8 +100,8 @@ model:
       name: mse
     mlp:
       shape: null
-      layers: 3
-      units: 256
+      layers: 2
+      units: 128
       act: SiLU
       norm: true
       dist:
@@ -111,10 +111,10 @@ model:
       symlog_inputs: false
       name: mlp_decoder
     cnn:
-      depth: 16
-      units: 256
+      depth: 8
+      units: 128
       bspace: 8
-      mults: [2, 3, 4, 4]
+      mults: [2, 3, 3, 4]
       act: SiLU
       norm: true
       kernel_size: 5
@@ -124,7 +124,7 @@ model:
   reward:
     shape: [255]
     layers: 1
-    units: 256
+    units: 128
     act: SiLU
     norm: true
     dist:
@@ -138,7 +138,7 @@ model:
   cont:
     shape: [1]
     layers: 1
-    units: 256
+    units: 128
     act: SiLU
     norm: true
     dist:
@@ -150,8 +150,8 @@ model:
 
   actor:
     shape: null
-    layers: 3
-    units: 256
+    layers: 2
+    units: 128
     act: SiLU
     norm: true
     device: ${train.device}
@@ -172,8 +172,8 @@ model:
 
   critic:
     shape: [255]
-    layers: 3
-    units: 256
+    layers: 2
+    units: 128
     act: SiLU
     norm: true
     device: ${train.device}
@@ -184,24 +184,24 @@ model:
     symlog_inputs: false
     name: value
 
-  deter: 2048
-  hidden: 256
-  discrete: 16
-  depth: 16
-  units: 256
+  deter: 768
+  hidden: 128
+  discrete: 8
+  depth: 8
+  units: 128
   act: SiLU
   norm: true
 
 # rollout / buffer
-batch_size: 16
-batch_length: 64
+batch_size: 8
+batch_length: 32
 
 buffer:
   batch_size: ${train.batch_size}
   batch_length: ${train.batch_length}
-  max_size: 500000
+  max_size: 200000
   device: ${train.device}
-  storage_device: ${train.device}
+  storage_device: cpu
 
 trainer:
   steps: 1_010_000
@@ -210,7 +210,7 @@ trainer:
   eval_episode_num: ${eval_episodes}
   batch_size: ${train.batch_size}
   batch_length: ${train.batch_length}
-  train_ratio: 512
+  train_ratio: 128
   video_pred_log: false
   params_hist_log: false
   update_log_every: 5_000
