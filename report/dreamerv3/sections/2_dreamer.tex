@@ -9,12 +9,7 @@ The core of the system is the Recurrent State-Space Model (RSSM), which learns t
 \begin{itemize}
     \item \textbf{Encoder:} Maps high-dimensional observations $x_t$ (e.g., pixels) into a compact, discrete latent state $z_t$. Using categorical variables allows the model to capture multiple possible futures and prevents gradient collapse.
     \item \textbf{Sequence Model (Dynamics):} A recurrent neural network that predicts the prior distribution of the next latent state $\hat{z}_{t+1}$ based on the current state $z_t$ and the action $a_t$.
-    \item \textbf{Decoders (Predictors):} These networks branch off the latent state to predict essential environment signals:
-    \begin{itemize}
-        \item \textbf{Reward Predictor:} Estimates the immediate reward $r_t$.
-        \item \textbf{Continue Predictor:} Predicts a discount factor $\gamma_t \in \{0, 1\}$, indicating if the episode will continue.
-        \item \textbf{Observation Decoder:} Reconstructs the original input to ensure the latent space retains relevant spatial information.
-    \end{itemize}
+    \item \textbf{Decoders (Predictors):} These networks branch off the latent state to predict essential environment signals. The \textbf{Reward Predictor} estimates the immediate reward $r_t$, the \textbf{Continue Predictor} forecasts whether the episode will continue (i.e., a discount factor $\gamma_t$), and the \textbf{Observation Decoder} reconstructs the original input to ensure the latent space retains relevant spatial information.
 \end{itemize}
 
 \subsection{Symlog Predictions and Robustness}
