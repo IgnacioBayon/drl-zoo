@@ -7,15 +7,17 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
 from src.dqn.train import train_dqn
+from src.dreamer.train import train_dreamer
+from src.ppo.train import train_ppo
 from src.rainbow.train import train_rainbow
 from src.sac.train import train_sac
-from src.ppo.train import train_ppo
 
 _TRAINERS = {
     "dqn": train_dqn,
     "rainbow": train_rainbow,
     "sac": train_sac,
     "ppo": train_ppo,
+    "dreamer": train_dreamer,
 }
 
 

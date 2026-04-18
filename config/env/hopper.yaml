@@ -8,6 +8,14 @@ num_envs: 30
 obs_size: 64
 stack_size: 4
 
+encoder:
+  mlp_keys: $^
+  cnn_keys: image
+
+decoder:
+  mlp_keys: $^
+  cnn_keys: image
+
 # reward shaping
 target_velocity: 1.5          
 forward_reward_weight: 3.0  
