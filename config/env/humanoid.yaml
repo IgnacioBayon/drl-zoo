@@ -29,5 +29,5 @@ max_episode_steps: 5000           # ~30s of sim time (dt=0.008) and 2m or real t
 frozen_joints: [1, 4, 8, 11, 12, 13, 14, 15, 16]  # limp arms and z hips
 # frozen_joints: null
 
-xml_file: null
-# xml_file: ".venv/Lib/site-packages/gymnasium/envs/mujoco/assets/hopper.xml"
+# xml_file: null
+xml_file: ".venv/Lib/site-packages/gymnasium/envs/mujoco/assets/hopper.xml"

@@ -164,6 +164,57 @@ class ImageObsWrapper(gym.ObservationWrapper):
         return cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
 
 
+class NormalizeActions(gym.ActionWrapper):
+    """Expose a ``Box([-1, 1])`` action space and rescale to the env's range.
+
+    DreamerV3-style actors produce actions in roughly ``[-1, 1]`` via a
+    tanh-squashed bounded normal; most MuJoCo tasks use narrower ranges
+    (e.g. ``[-0.4, 0.4]`` for Humanoid). This wrapper makes the two agree
+    so the world-model is trained on the same actions that are applied.
+    """
+
+    def __init__(self, env: gym.Env) -> None:
+        super().__init__(env)
+        if not isinstance(env.action_space, Box):
+            raise TypeError("NormalizeActions requires a Box action space.")
+        low = env.action_space.low.astype(np.float32)
+        high = env.action_space.high.astype(np.float32)
+        self._low = low
+        self._high = high
+        self.action_space = Box(
+            low=-np.ones_like(low),
+            high=np.ones_like(high),
+            dtype=np.float32,
+        )
+
+    def action(self, action: np.ndarray) -> np.ndarray:
+        action = np.clip(action, -1.0, 1.0)
+        return (action + 1.0) * 0.5 * (self._high - self._low) + self._low
+
+
+class RGBImageObsWrapper(gym.ObservationWrapper):
+    """Render and downscale to RGB (H, W, 3) uint8 observations.
+
+    Mirrors ``ImageObsWrapper`` but preserves the three colour channels —
+    required by pixel world models such as DreamerV3 that expect channel-last
+    RGB frames without frame stacking.
+    """
+
+    def __init__(self, env: gym.Env, obs_size: int = 64) -> None:
+        super().__init__(env)
+        self._obs_size = obs_size
+        self.observation_space = gym.spaces.Box(
+            0, 255, (obs_size, obs_size, 3), dtype=np.uint8
+        )
+
+    def observation(self, obs: np.ndarray) -> np.ndarray:
+        frame = self.env.render()
+        frame = cv2.resize(
+            frame, (self._obs_size, self._obs_size), interpolation=cv2.INTER_AREA
+        )
+        return frame.astype(np.uint8)
+
+
 class SmoothHopperWrapper(gym.RewardWrapper):
     def __init__(self, env, target_velocity=2.0):
         super().__init__(env)

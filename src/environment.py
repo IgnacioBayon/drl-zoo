@@ -6,6 +6,8 @@ from src.wrappers import (
     DiscretizeAction,
     FreezeJointsWrapper,
     ImageObsWrapper,
+    NormalizeActions,
+    RGBImageObsWrapper,
     SmoothHopperWrapper,
 )
 
@@ -25,6 +27,8 @@ def build_envs(
     frozen_joints: list[int] | None = None,
     vectorized: bool = True,
     discretize_actions: bool = False,
+    image_format: str = "gray",
+    normalize_actions: bool = False,
     **env_kwargs: dict,
 ):
     def wrap_env(env: gym.Env) -> gym.Env:
@@ -36,9 +40,15 @@ def build_envs(
                 env = SmoothHopperWrapper(env, target_velocity)
         if discretize_actions:
             env = DiscretizeAction(env, bins, multidiscrete)
+        elif normalize_actions:
+            env = NormalizeActions(env)
         if render_mode != "human":
-            env = ImageObsWrapper(env, obs_size=obs_size)
-        env = FrameStackObservation(env, stack_size)
+            if image_format == "rgb":
+                env = RGBImageObsWrapper(env, obs_size=obs_size)
+            else:
+                env = ImageObsWrapper(env, obs_size=obs_size)
+        if stack_size and stack_size > 1:
+            env = FrameStackObservation(env, stack_size)
         return env
 
     all_env_kwargs = {
@@ -87,6 +97,9 @@ def build_from_config(
         discretize_actions=use_discretize_actions,
         # vectorised envs
         vectorized=mode == "train",
+        # image format: "gray" (default) or "rgb" for pixel world models
+        image_format=str(train_cfg.get("image_format", "gray")),
+        normalize_actions=bool(train_cfg.get("normalize_actions", False)),
     )
 
     if use_discretize_actions and train_cfg.get("action_bins") is None:

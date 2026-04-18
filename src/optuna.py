@@ -110,12 +110,62 @@ def _sample_sac_params(trial: optuna.Trial) -> dict[str, Any]:
     }
 
 
+def _sample_dreamer_params(trial: optuna.Trial) -> dict[str, Any]:
+    # Key dreamer knobs: world-model lr, replay-ratio, KL shaping, actor
+    # entropy, R2-Dreamer redundancy coefficient, and reward shaping.
+    return {
+        "train.model.lr": trial.suggest_float(
+            "train.model.lr", 1e-5, 3e-4, log=True
+        ),
+        "train.model.kl_free": trial.suggest_float(
+            "train.model.kl_free", 0.1, 3.0, log=True
+        ),
+        "train.model.imag_horizon": trial.suggest_categorical(
+            "train.model.imag_horizon", [10, 15, 20]
+        ),
+        "train.model.horizon": trial.suggest_categorical(
+            "train.model.horizon", [200, 333, 500]
+        ),
+        "train.model.act_entropy": trial.suggest_float(
+            "train.model.act_entropy", 1e-4, 3e-3, log=True
+        ),
+        "train.model.loss_scales.rep": trial.suggest_float(
+            "train.model.loss_scales.rep", 0.05, 0.5, log=True
+        ),
+        "train.model.loss_scales.barlow": trial.suggest_float(
+            "train.model.loss_scales.barlow", 0.01, 0.3, log=True
+        ),
+        "train.model.r2dreamer.lambd": trial.suggest_float(
+            "train.model.r2dreamer.lambd", 1e-4, 5e-3, log=True
+        ),
+        "train.train_ratio": trial.suggest_categorical(
+            "train.train_ratio", [256, 512, 1024]
+        ),
+        "train.buffer.batch_size": trial.suggest_categorical(
+            "train.buffer.batch_size", [8, 16, 32]
+        ),
+        "train.buffer.batch_length": trial.suggest_categorical(
+            "train.buffer.batch_length", [32, 64]
+        ),
+        # Reward shaping — usually the biggest lever for MuJoCo locomotion.
+        "env.target_velocity": trial.suggest_float("env.target_velocity", 0.0, 5.0),
+        "env.forward_reward_weight": trial.suggest_float(
+            "env.forward_reward_weight", 1.0, 5.0
+        ),
+        "env.healthy_reward": trial.suggest_float("env.healthy_reward", 0.0, 2.0),
+        "env.ctrl_cost_weight": trial.suggest_float(
+            "env.ctrl_cost_weight", 1e-4, 1e-1, log=True
+        ),
+    }
+
+
 def _sample_params(algorithm: str, trial: optuna.Trial) -> dict[str, Any]:
     samplers = {
         "ppo": _sample_ppo_params,
         "dqn": _sample_dqn_params,
         "rainbow": _sample_rainbow_params,
         "sac": _sample_sac_params,
+        "dreamer": _sample_dreamer_params,
     }
     if algorithm not in samplers:
         raise ValueError(f"Unsupported algorithm '{algorithm}'.")
@@ -215,7 +265,7 @@ def parse_args() -> argparse.Namespace:
         "--algorithm",
         type=str,
         default="ppo",
-        choices=["dqn", "rainbow", "ppo", "sac"],
+        choices=["dqn", "rainbow", "ppo", "sac", "dreamer"],
         help="Algorithm config group to optimize.",
     )
     parser.add_argument(

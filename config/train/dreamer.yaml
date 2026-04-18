@@ -1,0 +1,238 @@
+device: auto   # auto | cpu | cuda
+
+# DreamerV3 / R2Dreamer prefers a single env so that env steps map 1:1 to the
+# train_ratio formula the paper assumes (updating target/slow nets inside the
+# gradient loop). Bumping this changes the effective replay-ratio.
+num_envs: 1
+
+# Continuous actions — no bins, no multidiscrete.
+discretize_actions: false
+# Rescale env action space to [-1, 1] so the Dreamer actor's bounded_normal
+# samples map directly to env actions.
+normalize_actions: true
+# RGB (H, W, 3) observations without frame stacking (RSSM handles recurrence).
+image_format: rgb
+
+# Training budget
+total_frames: 1_000_000
+
+# Data-vs-update ratio (gradient steps per batch_steps of new data).
+train_ratio: 512
+# Wait until we have enough transitions to form at least one valid slice.
+prefill: 1024
+# Tensorboard / console log cadence in frames.
+log_train_every: 5000
+
+# ---------------------------------------------------------------------------
+# Replay buffer (torchrl LazyTensorStorage + SliceSampler, see
+# ``src.dreamer.buffer.Buffer``).
+# ---------------------------------------------------------------------------
+buffer:
+  batch_size: 8
+  batch_length: 32
+  max_size: 500_000
+  device: ${train.device}
+  storage_device: ${train.device}
+
+# ---------------------------------------------------------------------------
+# Dreamer model (world model + actor + critic + R2Dreamer Barlow-Twins head).
+#
+# Size preset ``dreamer_small`` (~3M params) — scaled down from r2dreamer's
+# size12M reference. Original paper targets DMC (1-2 DoF) at size12M; Humanoid
+# (8 DoF pixel from 96x96) does not need a 15M-param world model to make early
+# progress. Knobs to scale back up:
+#   deter 512 -> 2048, discrete 8 -> 16, depth 8 -> 16, blocks 4 -> 8,
+#   batch_length 32 -> 64, imag_horizon 10 -> 15.
+# ---------------------------------------------------------------------------
+model:
+  deter: 512
+  hidden: 256
+  discrete: 8
+  depth: 8
+  units: 256
+  act: 'SiLU'
+  norm: True
+  device: ${train.device}
+
+  # world-model / rollout
+  act_entropy: 3e-4
+  kl_free: 1.0
+  imag_horizon: 10
+  horizon: 333
+  lamb: 0.95
+  compile: False       # torch.compile — brittle on Windows, off by default
+  log_grads: False
+  rep_loss: "r2dreamer"   # r2dreamer | dreamer | infonce | dreamerpro
+
+  # optimiser
+  lr: 4e-5
+  agc: 0.3
+  pmin: 1e-3
+  eps: 1e-20
+  beta1: 0.9
+  beta2: 0.999
+  warmup: 1000
+  slow_target_update: 1
+  slow_target_fraction: 0.02
+
+  loss_scales:
+    barlow: 0.05
+    infonce: 1.0
+    recon: 1.0
+    rew: 1.0
+    con: 1.0
+    dyn: 1.0
+    rep: 0.1
+    policy: 1.0
+    value: 1.0
+    repval: 0.3
+    swav: 1.0
+    temp: 1.0
+    norm: 1.0
+
+  r2dreamer:
+    lambd: 5e-4
+
+  dreamer_pro:
+    warm_up: 1
+    num_prototypes: 2500
+    proto_dim: 32
+    temperature: 0.1
+    sinkhorn_eps: 0.05
+    sinkhorn_iters: 3
+    ema_update_every: 1
+    ema_update_fraction: 0.05
+    freeze_prototypes_iters: 10000
+    aug:
+      max_delta: 3.0
+      same_across_time: True
+      bilinear: True
+
+  rssm:
+    stoch: 32
+    deter: ${train.model.deter}
+    hidden: ${train.model.hidden}
+    discrete: ${train.model.discrete}
+    img_layers: 2
+    obs_layers: 1
+    dyn_layers: 1
+    blocks: 4
+    act: ${train.model.act}
+    norm: ${train.model.norm}
+    unimix_ratio: 0.01
+    initial: 'learned'
+    device: ${train.device}
+
+  encoder:
+    mlp_keys: '$^'       # match nothing — no proprioceptive MLP head
+    cnn_keys: 'image'
+    mlp:
+      shape: null
+      layers: 3
+      units: ${train.model.units}
+      act: ${train.model.act}
+      norm: ${train.model.norm}
+      device: ${train.device}
+      outscale: null
+      symlog_inputs: True
+      name: 'mlp_encoder'
+    cnn:
+      act: ${train.model.act}
+      norm: ${train.model.norm}
+      kernel_size: 5
+      minres: 4
+      depth: ${train.model.depth}
+      mults: [2, 3, 4, 4]
+
+  decoder:
+    mlp_keys: '$^'
+    cnn_keys: 'image'
+    mlp_dist:
+      name: 'symlog_mse'
+    cnn_dist:
+      name: 'mse'
+    mlp:
+      shape: null
+      layers: 3
+      units: ${train.model.units}
+      act: ${train.model.act}
+      norm: ${train.model.norm}
+      dist:
+        name: 'identity'
+      device: ${train.device}
+      outscale: 1.0
+      symlog_inputs: False
+      name: 'mlp_decoder'
+    cnn:
+      depth: ${train.model.depth}
+      units: ${train.model.units}
+      bspace: 8
+      mults: [2, 3, 4, 4]
+      act: ${train.model.act}
+      norm: ${train.model.norm}
+      kernel_size: 5
+      minres: 4
+      outscale: 1.0
+
+  reward:
+    shape: [255]
+    layers: 1
+    units: ${train.model.units}
+    act: ${train.model.act}
+    norm: ${train.model.norm}
+    dist:
+      name: 'symexp_twohot'
+      bin_num: 255
+    outscale: 0.0
+    device: ${train.device}
+    symlog_inputs: False
+    name: 'reward'
+
+  cont:
+    shape: [1]
+    layers: 1
+    units: ${train.model.units}
+    act: ${train.model.act}
+    norm: ${train.model.norm}
+    dist:
+      name: 'binary'
+    outscale: 1.0
+    device: ${train.device}
+    symlog_inputs: False
+    name: 'cont'
+
+  actor:
+    shape: null
+    layers: 3
+    units: ${train.model.units}
+    act: ${train.model.act}
+    norm: ${train.model.norm}
+    device: ${train.device}
+    dist:
+      cont:
+        name: 'bounded_normal'
+        min_std: 0.1
+        max_std: 1.0
+      disc:
+        name: 'onehot'
+        unimix_ratio: 0.01
+      multi_disc:
+        name: 'multi_onehot'
+        unimix_ratio: 0.01
+    outscale: 0.01
+    symlog_inputs: False
+    name: 'actor'
+
+  critic:
+    shape: [255]
+    layers: 3
+    units: ${train.model.units}
+    act: ${train.model.act}
+    norm: ${train.model.norm}
+    device: ${train.device}
+    dist:
+      name: 'symexp_twohot'
+      bin_num: 255
+    outscale: 0.0
+    symlog_inputs: False
+    name: 'value'

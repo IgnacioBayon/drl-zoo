@@ -20,6 +20,8 @@ dependencies = [
     "plotly>=6.6.0",
     "scikit-learn>=1.8.0",
     "optuna-dashboard>=0.20.0",
+    "tensordict>=0.5.0",
+    "torchrl>=0.5.0",
 ]
 
 [[tool.uv.index]]
